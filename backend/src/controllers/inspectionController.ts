@@ -51,7 +51,7 @@ async function shiftContext(branchId: number): Promise<{
 }
 
 const inspectionSchema = z.object({
-  vehicleId:                 z.coerce.string(),
+  vehicleId:                 z.string().min(1),
   plate:                     z.string(),
   returnStatus:              z.enum(['received', 'not_returned', 'never_left', 'other']),
   authorizedBy:              z.string().optional(),

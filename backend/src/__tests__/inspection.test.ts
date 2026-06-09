@@ -313,25 +313,14 @@ describe('POST /inspections', () => {
       expect(res.body.errors).toBeDefined();
     });
 
-    // ── Documented gap ────────────────────────────────────────────────────────
-    // `vehicleId` is declared as `z.coerce.string()`. Zod's coerce applies
-    // `String()` to the value, so a *missing* key becomes the literal string
-    // "undefined" — it passes schema validation and reaches the DB layer.
-    // `getVehicleById("undefined")` resolves to the mock vehicle in tests, so
-    // the request succeeds with 200. In production the parseInt("undefined")
-    // produces NaN and the query likely returns no rows (vehicle not found).
-    // Hardening: change the schema to `z.string().min(1)` so a missing or
-    // empty vehicleId is rejected with 400 before touching the DB.
-    it('missing vehicleId slips past z.coerce.string() (documents gap — should be 400, currently 200)', async () => {
+    it('missing vehicleId → 400 VALIDATION_ERROR', async () => {
       const { vehicleId: _, ...noId } = receivedBody;
       const res = await request(app)
         .post('/inspections')
         .set('Cookie', authCookie())
         .send(noId);
-      // Current behavior: zod coerces undefined → "undefined" → passes validation.
-      // This test PINS the current behavior; when the schema is hardened to
-      // z.string().min(1) this assertion should be changed back to 400.
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(400);
+      expect(res.body.statusCode).toBe('VALIDATION_ERROR');
     });
 
     it('invalid returnStatus value → 400 VALIDATION_ERROR', async () => {
