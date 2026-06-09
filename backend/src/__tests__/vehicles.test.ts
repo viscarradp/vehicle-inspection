@@ -354,20 +354,51 @@ describe('GET /vehicles/:id/history', () => {
   });
 
   it('200 returns inspection history', async () => {
+    mockGetById.mockResolvedValueOnce(vehicleRow());
     mockGetHistory.mockResolvedValueOnce([inspectionRow()]);
     const res = await request(app).get('/vehicles/10/history').set('Cookie', cookie);
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
   });
 
-  it('200 with empty history', async () => {
+  it('200 with empty history when vehicle exists but has no inspections', async () => {
+    mockGetById.mockResolvedValueOnce(vehicleRow());
     mockGetHistory.mockResolvedValueOnce([]);
     const res = await request(app).get('/vehicles/10/history').set('Cookie', cookie);
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(0);
   });
 
-  it('500 on DB failure', async () => {
+  // ── Scope consistency fix (PENDIENTE-01 from AUDIT.md) ───────────────────
+  // Before this fix, GET /:id returned 404 for out-of-scope vehicles but
+  // GET /:id/history returned 200 + empty array for the same vehicle — callers
+  // could distinguish "vehicle doesn't exist" from "vehicle outside your scope".
+  // After this fix, both endpoints return 404 for the same vehicle + scope combo.
+  it('404 when vehicle is not found', async () => {
+    mockGetById.mockResolvedValueOnce(null);
+    const res = await request(app).get('/vehicles/999/history').set('Cookie', cookie);
+    expect(res.status).toBe(404);
+    expect(res.body.statusCode).toBe('NOT_FOUND');
+  });
+
+  it('404 when vehicle is outside caller scope (consistent with GET /:id)', async () => {
+    // Scope filter excludes the vehicle from DB → same 404 as "not found"
+    mockGetById.mockResolvedValueOnce(null);
+    const res = await request(app)
+      .get('/vehicles/999/history')
+      .set('Cookie', authCookie({ role: 'guardia', branchId: 1 }));
+    expect(res.status).toBe(404);
+    expect(res.body.statusCode).toBe('NOT_FOUND');
+  });
+
+  it('500 on DB failure in getVehicleById', async () => {
+    mockGetById.mockRejectedValueOnce(new Error('DB timeout'));
+    const res = await request(app).get('/vehicles/10/history').set('Cookie', cookie);
+    expect(res.status).toBe(500);
+  });
+
+  it('500 on DB failure in getInspectionsByVehicle', async () => {
+    mockGetById.mockResolvedValueOnce(vehicleRow());
     mockGetHistory.mockRejectedValueOnce(new Error('DB timeout'));
     const res = await request(app).get('/vehicles/10/history').set('Cookie', cookie);
     expect(res.status).toBe(500);

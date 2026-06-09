@@ -40,7 +40,13 @@ router.get('/:id', async (req, res, next) => {
 
 router.get('/:id/history', async (req, res, next) => {
   try {
-    const inspections = await getInspectionsByVehicle(req.params.id, scopeFromRequest(req));
+    const scope   = scopeFromRequest(req);
+    const vehicle = await getVehicleById(req.params.id, scope);
+    if (!vehicle) {
+      res.status(404).json({ success: false, statusCode: 'NOT_FOUND', message: 'Vehículo no encontrado.', uiState: 'not_found' });
+      return;
+    }
+    const inspections = await getInspectionsByVehicle(req.params.id, scope);
     res.json({ success: true, statusCode: 'OK', message: 'Historial.', uiState: 'saved_successfully', data: inspections });
   } catch (err) { next(err); }
 });

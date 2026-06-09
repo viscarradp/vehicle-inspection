@@ -112,9 +112,11 @@ export async function setBranchActive(id: number, active: boolean): Promise<void
 
 // ─── Timezone (module-level cache) ───────────────────────────────────────────
 
-// Timezones are a property of the country — they change essentially never.
-// A module-level cache avoids a DB round-trip on every request with zero risk
-// of stale data in practice. A server restart clears it if an edge case arises.
+// Timezones are a property of the country (Countries.Timezone) — they change
+// essentially never. A module-level cache avoids a DB round-trip on every
+// request. The cache is invalidated explicitly when a country's timezone is
+// edited (invalidateBranchTimezoneCache, called from PUT /countries/:id), with a
+// server restart as the final backstop.
 const tzCache = new Map<number, string>();
 
 /**
@@ -139,4 +141,21 @@ export async function getBranchTimezone(branchId: number): Promise<string> {
 
   tzCache.set(branchId, tz);
   return tz;
+}
+
+/**
+ * Vacía la cache de timezones por sucursal.
+ *
+ * El timezone es propiedad del país; cuando admin_global edita el timezone de un
+ * país, las entradas branch→tz de las sucursales de ese país quedan obsoletas.
+ * Como las ediciones son rarísimas y la cache es pequeña, limpiarla por completo
+ * es lo más simple y totalmente correcto (no requiere mapear país→sucursales).
+ *
+ * Multi-proceso: limpia la cache del proceso actual. En un despliegue con varias
+ * instancias Node las demás se refrescan en su próximo reinicio; si se escala a
+ * multi-instancia, reemplazar el cuerpo por una señal compartida (p. ej. pub/sub)
+ * sin cambiar la firma.
+ */
+export function invalidateBranchTimezoneCache(): void {
+  tzCache.clear();
 }

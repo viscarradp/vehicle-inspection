@@ -29,6 +29,8 @@ import {
   normalizeVehicleIdentifiers,
   resolveVehicleIdentifiersForUpdate,
   validateVehicleIdentifiers,
+  parseInitialMileage,
+  MAX_INITIAL_MILEAGE,
 } from '../utils/vehicleFields';
 
 const router = Router();
@@ -69,7 +71,7 @@ function resolveBodyBranchId(
 
 router.post('/vehicles', requireAdminLevel, async (req, res, next) => {
   try {
-    const { plate, vehicleType, brand, model, year, notes, branchId: bodyBranchId, initialMileage } = req.body;
+    const { plate, vehicleType, brand, model, year, notes, branchId: bodyBranchId } = req.body;
     const identifiers = normalizeVehicleIdentifiers(req.body);
     const idError = validateVehicleIdentifiers(identifiers);
     if (idError) {
@@ -79,6 +81,15 @@ router.post('/vehicles', requireAdminLevel, async (req, res, next) => {
 
     if (!plate || !brand || !model) {
       res.status(400).json({ success: false, statusCode: 'MISSING_FIELDS', message: 'Placa, marca y modelo son obligatorios.', uiState: 'validation_error' });
+      return;
+    }
+
+    // Kilometraje inicial: entero acotado [0, MAX]. parseInitialMileage devuelve
+    // null para valores inválidos (negativos, fuera de rango, no enteros, basura
+    // tipo '100abc' o tipos no numéricos) → 400 antes de tocar la DB.
+    const initialMileage = parseInitialMileage(req.body.initialMileage);
+    if (initialMileage === null) {
+      res.status(400).json({ success: false, statusCode: 'INVALID_MILEAGE', message: `El kilometraje inicial debe ser un entero entre 0 y ${MAX_INITIAL_MILEAGE}.`, uiState: 'validation_error' });
       return;
     }
 
@@ -103,7 +114,7 @@ router.post('/vehicles', requireAdminLevel, async (req, res, next) => {
       model,
       year: year ?? null,
       notes,
-      initialMileage: initialMileage ? parseInt(initialMileage, 10) : 0,
+      initialMileage,
       ...identifiers,
     });
     res.status(201).json({ success: true, statusCode: 'VEHICLE_CREATED', message: 'Vehículo creado.', uiState: 'saved_successfully', data: vehicle });

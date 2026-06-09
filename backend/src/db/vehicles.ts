@@ -248,6 +248,16 @@ export async function setVehicleStatus(data: {
     WHERE Id = @id
   `);
 
+  // PENDIENTE-02 — RLS en VehicleStatusLog:
+  // Hoy esta tabla solo se ESCRIBE (este INSERT) y no se expone por ningún
+  // endpoint de lectura. El INSERT corre sobre la transacción del request, que
+  // lleva el SESSION_CONTEXT del tenant, por lo que las políticas RLS de SQL
+  // Server lo gobiernan. Si en el futuro se añade un endpoint de auditoría de
+  // estados, su query de lectura DEBE filtrar por tenant:
+  //   JOIN Vehicles v ON v.Id = VehicleStatusLog.VehicleId
+  //   ... AND ${applyScopeWhere(req, scope, 'v.BranchId')}
+  // ('v.BranchId' ya está en la allowlist de scopeUtils). Nunca leer esta tabla
+  // sin scope.
   const log = getConn();
   log.input('vehicleId', sql.Int,           parseInt(data.vehicleId, 10));
   log.input('oldStatus', sql.NVarChar(30),  oldStatus);

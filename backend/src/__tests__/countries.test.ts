@@ -34,6 +34,10 @@ jest.mock('../db/countries', () => ({
 import {
   getCountries, getCountryById, createCountry, updateCountry, setCountryActive,
 } from '../db/countries';
+// db/branches is NOT mocked: we spy on the real invalidateBranchTimezoneCache
+// export to assert the country-update path wires it (PENDIENTE-05). Its body
+// only clears an in-memory Map, so calling the real impl in tests is harmless.
+import * as branchesDb from '../db/branches';
 
 const mockGetAll      = getCountries     as jest.Mock;
 const mockGetById     = getCountryById   as jest.Mock;
@@ -205,6 +209,31 @@ describe('PUT /countries/:id', () => {
       .set('Cookie', globalCookie)
       .send({ name: 'Ghost Country' });
     expect(res.status).toBe(404);
+  });
+
+  // ── Branch timezone cache invalidation (PENDIENTE-05) ──────────────────────
+  it('invalidates the branch timezone cache when timezone is updated', async () => {
+    const spy = jest.spyOn(branchesDb, 'invalidateBranchTimezoneCache').mockImplementation(() => {});
+    mockGetById.mockResolvedValueOnce(countryRow());
+    mockUpdate.mockResolvedValueOnce(undefined);
+    const res = await request(app).put('/countries/1')
+      .set('Cookie', globalCookie)
+      .send({ name: 'Guatemala', timezone: 'America/Guatemala' });
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  it('does NOT invalidate the timezone cache when only the name changes', async () => {
+    const spy = jest.spyOn(branchesDb, 'invalidateBranchTimezoneCache').mockImplementation(() => {});
+    mockGetById.mockResolvedValueOnce(countryRow());
+    mockUpdate.mockResolvedValueOnce(undefined);
+    const res = await request(app).put('/countries/1')
+      .set('Cookie', globalCookie)
+      .send({ name: 'Solo Nombre' });
+    expect(res.status).toBe(200);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

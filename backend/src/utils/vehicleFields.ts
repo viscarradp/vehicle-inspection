@@ -74,3 +74,33 @@ export function validateVehicleIdentifiers(fields: VehicleIdentifierInput): stri
 
   return null;
 }
+
+// ─── Initial mileage ──────────────────────────────────────────────────────────
+
+/**
+ * Kilometraje máximo aceptado al registrar un vehículo. Un odómetro de 7 dígitos
+ * llega a 9 999 999; acotar aquí evita que un valor absurdo (negativo o de miles
+ * de millones) corrompa los cálculos antifraude de diferencia de kilometraje.
+ */
+export const MAX_INITIAL_MILEAGE = 9_999_999;
+
+/**
+ * Valida y normaliza el kilometraje inicial recibido en el body de creación.
+ *
+ * Devuelve:
+ *  - el entero validado (0 … {@link MAX_INITIAL_MILEAGE}) si es válido;
+ *  - 0 si el campo viene ausente/vacío (valor por defecto);
+ *  - null si el valor es inválido (no entero, negativo, fuera de rango o de un
+ *    tipo no numérico) → el caller debe responder 400.
+ *
+ * Usa Number() y no parseInt(): parseInt('100abc') devuelve 100 en silencio,
+ * mientras que Number('100abc') es NaN y se rechaza. También rechaza decimales,
+ * NaN, Infinity y tipos no numéricos (booleanos, objetos, arrays).
+ */
+export function parseInitialMileage(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === '') return 0;
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  const n = typeof raw === 'number' ? raw : Number(raw.trim());
+  if (!Number.isInteger(n) || n < 0 || n > MAX_INITIAL_MILEAGE) return null;
+  return n;
+}

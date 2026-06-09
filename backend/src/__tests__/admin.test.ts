@@ -66,8 +66,11 @@ jest.mock('../db/scopeUtils', () => ({
   assertResourceInScope: jest.fn().mockResolvedValue(undefined),
   applyScopeWhere:       jest.fn(() => '1=1'),
 }));
-// vehicleFields runs pure validation — not mocked intentionally
+// Identifier normalization/validation is stubbed so these route tests don't
+// re-exercise it (it has its own coverage). parseInitialMileage / the rest are
+// kept REAL via requireActual so the initialMileage bounds run end-to-end here.
 jest.mock('../utils/vehicleFields', () => ({
+  ...jest.requireActual('../utils/vehicleFields'),
   normalizeVehicleIdentifiers:      jest.fn(() => ({})),
   resolveVehicleIdentifiersForUpdate: jest.fn(() => ({})),
   validateVehicleIdentifiers:       jest.fn(() => null), // null = no error
@@ -196,6 +199,45 @@ describe('POST /admin/vehicles', () => {
       .set('Cookie', adminCookie)
       .send(validBody);
     expect(res.status).toBe(500);
+  });
+
+  // ── initialMileage bounds (PENDIENTE-04) ──────────────────────────────────
+  it('201 forwards a valid initialMileage to createVehicle', async () => {
+    mockCreateVehicle.mockResolvedValueOnce(vehicleRow({ plate: 'XYZ-999', initialMileage: 50000 }));
+    const res = await request(app).post('/admin/vehicles')
+      .set('Cookie', adminCookie)
+      .send({ ...validBody, initialMileage: 50000 });
+    expect(res.status).toBe(201);
+    expect(mockCreateVehicle).toHaveBeenCalledWith(
+      expect.objectContaining({ initialMileage: 50000 }),
+    );
+  });
+
+  it('201 defaults initialMileage to 0 when omitted', async () => {
+    mockCreateVehicle.mockResolvedValueOnce(vehicleRow({ plate: 'XYZ-999' }));
+    const res = await request(app).post('/admin/vehicles')
+      .set('Cookie', adminCookie)
+      .send(validBody);
+    expect(res.status).toBe(201);
+    expect(mockCreateVehicle).toHaveBeenCalledWith(
+      expect.objectContaining({ initialMileage: 0 }),
+    );
+  });
+
+  // 400 BEFORE the DB layer — these must NOT prime createVehicle (mock-queue hygiene).
+  it.each([
+    ['negative',       -5000],
+    ['out of range',   10_000_000],
+    ['non-numeric',    'cien-mil'],
+    ['decimal',        100.5],
+    ['trailing junk',  '100abc'],
+  ])('400 INVALID_MILEAGE when initialMileage is %s', async (_label, value) => {
+    const res = await request(app).post('/admin/vehicles')
+      .set('Cookie', adminCookie)
+      .send({ ...validBody, initialMileage: value });
+    expect(res.status).toBe(400);
+    expect(res.body.statusCode).toBe('INVALID_MILEAGE');
+    expect(mockCreateVehicle).not.toHaveBeenCalled();
   });
 });
 

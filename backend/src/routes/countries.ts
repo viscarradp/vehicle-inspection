@@ -8,6 +8,7 @@ import {
   updateCountry,
   setCountryActive,
 } from '../db/countries';
+import { invalidateBranchTimezoneCache } from '../db/branches';
 
 const router = Router();
 
@@ -64,6 +65,11 @@ router.put('/:id', requireGlobal, async (req, res, next) => {
       return;
     }
     await updateCountry(id, { name, timezone });
+    // El timezone se cachea por sucursal en db/branches. Si cambió, invalidamos
+    // la cache para no servir el valor anterior hasta el próximo reinicio
+    // (PENDIENTE-05). Las ediciones de timezone son rarísimas, así que el costo
+    // de limpiar toda la cache es despreciable.
+    if (timezone !== undefined) invalidateBranchTimezoneCache();
     res.json({ success: true, statusCode: 'COUNTRY_UPDATED', message: 'País actualizado.', uiState: 'saved_successfully' });
   } catch (err) { next(err); }
 });
