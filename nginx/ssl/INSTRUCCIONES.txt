@@ -1,0 +1,2 @@
+Coloca aqui cert.pem y key.pem antes de ejecutar docker compose.
+Ver deploy/DEPLOYMENT.md seccion 4.

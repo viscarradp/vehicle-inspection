@@ -1,0 +1,14 @@
+**/node_modules
+**/.git
+**/.env
+**/*.env
+frontend/dist
+backend/dist
+release/
+deploy/
+*.zip
+*.log
+uploads/
+nginx/ssl/*.pem
+nginx/ssl/*.crt
+nginx/ssl/*.key

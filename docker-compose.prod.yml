@@ -1,0 +1,50 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: vehicle-inspection:latest
+    container_name: vi_app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    volumes:
+      - vi_uploads:/app/uploads    # Photo uploads
+    expose:
+      - "3001"
+    networks:
+      - vi_network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: vi_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro         # Place cert.pem + key.pem here
+      - vi_uploads:/var/www/uploads:ro         # Serve uploads directly (bypass Node)
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - vi_network
+
+volumes:
+  vi_uploads:
+  nginx_logs:
+
+networks:
+  vi_network:
+    driver: bridge

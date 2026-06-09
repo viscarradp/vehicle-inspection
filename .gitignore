@@ -1,0 +1,34 @@
+# Credenciales — NUNCA subir al repositorio
+.env
+*.env
+gcp-credentials.json
+*.pem
+*.key
+*.crt
+
+# Dependencias
+node_modules/
+
+# Build
+dist/
+frontend/dist/
+public/
+
+# Base de datos local
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Uploads locales
+uploads/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/

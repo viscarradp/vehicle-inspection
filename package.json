@@ -1,0 +1,12 @@
+{
+  "name": "vehicle-inspection-cm",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "backend":   "npm run dev --prefix backend",
+    "frontend":  "npm run dev --prefix frontend",
+    "db:seed":   "npm run db:seed  --prefix backend",
+    "db:clean":  "npm run db:clean --prefix backend",
+    "db:reset":  "npm run db:reset --prefix backend"
+  }
+}

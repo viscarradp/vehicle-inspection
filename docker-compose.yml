@@ -1,0 +1,37 @@
+# docker-compose.yml — Entorno local / desarrollo
+#
+# USO:
+#   docker compose up --build
+#   Acceder en: http://localhost:3001
+#
+# REQUISITOS:
+#   1. Copiar backend/.env.example → backend/.env y llenar los valores
+#   2. Si SQL Server corre en este mismo Windows:
+#        MSSQL_HOST=host.docker.internal  (en lugar de localhost)
+#   3. MSSQL_TRUST_CERT=true si el servidor no tiene cert SSL válido
+
+name: vehicle-inspection-local
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vi_app
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      NODE_ENV: production
+    ports:
+      - "3001:3001"
+    volumes:
+      - vi_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  vi_uploads:

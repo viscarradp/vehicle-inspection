@@ -1,0 +1,70 @@
+# docker-compose.dev.yml — Entorno de DESARROLLO containerizado (hot-reload)
+#
+# USO:
+#   docker compose -f docker-compose.dev.yml up
+#   Frontend (UI):  http://localhost:5173
+#   Backend (API):  http://localhost:3001
+#   Detener:        Ctrl-C   |   limpiar deps: docker compose -f docker-compose.dev.yml down -v
+#
+# DIFERENCIAS CLAVE vs. docker-compose.yml (que es prod-like):
+#   - NODE_ENV=development → la cookie de login NO lleva `Secure` (funciona sobre
+#     HTTP), CORS permite el origen de Vite, y el SPA lo sirve Vite con hot-reload
+#     (no Node). El self-test de RLS sólo ADVIERTE (no aborta), así que puedes usar
+#     tu DB local con `sa` sin crear el usuario vi_app.
+#   - El código fuente se monta como volumen → cambios en backend/ y frontend/ se
+#     recargan en caliente, sin reconstruir imagen.
+#
+# BASE DE DATOS:
+#   Por defecto se conecta al SQL Server de tu host vía host.docker.internal.
+#   Asegúrate de que tu SQL Server local tenga TCP/IP habilitado en el puerto 1433.
+#   (Para tests herméticos con RLS real se añadirá un servicio `db` + seed — ver
+#   el harness de pruebas automatizadas.)
+
+name: vehicle-inspection-dev
+
+services:
+  backend:
+    image: node:20-alpine
+    container_name: vi_backend_dev
+    working_dir: /app/backend
+    command: sh -c "npm install && npm run dev"
+    env_file: backend/.env
+    environment:
+      NODE_ENV: development
+      # Alcanza el SQL Server del host (sobreescribe el localhost del .env, que
+      # dentro del contenedor apuntaría al propio contenedor).
+      MSSQL_HOST: host.docker.internal
+      # File-watch fiable sobre bind mounts (Docker Desktop / Windows).
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend:/app/backend                              # código (hot-reload)
+      - backend_node_modules:/app/backend/node_modules      # deps aisladas del host (binarios nativos: sharp)
+      - vi_uploads_dev:/app/backend/uploads                 # fotos subidas
+    extra_hosts:
+      # Necesario en Linux/CI; en Docker Desktop host.docker.internal ya existe.
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    image: node:20-alpine
+    container_name: vi_frontend_dev
+    working_dir: /app/frontend
+    command: sh -c "npm install && npm run dev"
+    environment:
+      # Vite proxya /api → el contenedor backend (no localhost, que sería el
+      # propio contenedor del frontend).
+      VITE_PROXY_TARGET: http://backend:3001
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app/frontend
+      - frontend_node_modules:/app/frontend/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  backend_node_modules:
+  frontend_node_modules:
+  vi_uploads_dev:
