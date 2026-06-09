@@ -131,7 +131,7 @@ beforeEach(() => {
   mockGetInspectionById.mockResolvedValue(inspectionRow());
   mockRefreshMileage.mockResolvedValue(undefined);
   mockSetOpenIssuesFlag.mockResolvedValue(undefined);
-  mockSetVehicleStatus.mockResolvedValue(undefined);
+  mockSetVehicleStatus.mockResolvedValue({ changed: false, oldStatus: 'active' });
   mockCreateIssue.mockResolvedValue({ id: '200' });
   mockCreateAuditLog.mockResolvedValue(undefined);
   // Default: mileage is normal, no warning.
