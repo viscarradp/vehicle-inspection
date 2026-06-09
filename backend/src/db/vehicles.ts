@@ -54,12 +54,25 @@ export async function getAllVehicles(scope: TenantScope): Promise<Vehicle[]> {
   return result.recordset.map(toVehicle);
 }
 
-export async function getVehicleById(id: string): Promise<Vehicle> {
+/**
+ * Returns the vehicle by ID, optionally filtered by tenant scope.
+ *
+ * When `scope` is supplied the SQL WHERE clause includes the scope filter.
+ * The function returns `null` when the vehicle does not exist OR when it falls
+ * outside the provided scope — callers receive the same 404 in both cases,
+ * which prevents IDOR enumeration (a caller cannot distinguish "vehicle
+ * doesn't exist" from "vehicle exists but belongs to a different branch").
+ *
+ * When `scope` is omitted the function performs an unscoped lookup and returns
+ * `null` only when the row is missing.  Use this form only in admin mutation
+ * handlers that perform their own `assertResourceInScope` check afterwards.
+ */
+export async function getVehicleById(id: string, scope?: TenantScope): Promise<Vehicle | null> {
   const req = getConn();
   req.input('id', sql.Int, parseInt(id, 10));
-  const result = await req.query(`SELECT * FROM Vehicles WHERE Id = @id`);
-  if (!result.recordset[0]) throw new AppError(404, 'NOT_FOUND', 'Vehículo no encontrado.');
-  return toVehicle(result.recordset[0]);
+  const scopeClause = scope ? `AND ${applyScopeWhere(req, scope)}` : '';
+  const result = await req.query(`SELECT * FROM Vehicles WHERE Id = @id ${scopeClause}`);
+  return result.recordset[0] ? toVehicle(result.recordset[0]) : null;
 }
 
 export async function createVehicle(data: {
@@ -206,7 +219,7 @@ export async function setVehicleStatus(data: {
   const read = getConn();
   read.input('id', sql.Int, parseInt(data.vehicleId, 10));
   const current = await read.query(`SELECT CurrentStatus FROM Vehicles WHERE Id = @id`);
-  if (!current.recordset[0]) throw new Error(`Vehicle ${data.vehicleId} not found`);
+  if (!current.recordset[0]) throw new AppError(404, 'NOT_FOUND', 'Vehículo no encontrado.');
   const oldStatus = (current.recordset[0].CurrentStatus as VehicleStatus) ?? 'active';
 
   if (oldStatus === data.newStatus) {

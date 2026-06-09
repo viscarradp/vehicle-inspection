@@ -16,6 +16,15 @@ const router = Router();
 router.use(requireAuth);
 const requireGlobal = requireRole('admin_global');
 
+function isValidIANATimezone(tz: string): boolean {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
 router.get('/', async (_req, res, next) => {
@@ -35,6 +44,10 @@ router.post('/', requireGlobal, async (req, res, next) => {
       res.status(400).json({ success: false, statusCode: 'MISSING_FIELDS', message: 'Código, nombre y zona horaria son obligatorios.', uiState: 'validation_error' });
       return;
     }
+    if (!isValidIANATimezone(timezone)) {
+      res.status(400).json({ success: false, statusCode: 'INVALID_TIMEZONE', message: 'Zona horaria IANA inválida. Ejemplo: "America/Guatemala".', uiState: 'validation_error' });
+      return;
+    }
 
     const country = await createCountry({ code, name, timezone });
     res.status(201).json({ success: true, statusCode: 'COUNTRY_CREATED', message: 'País creado.', uiState: 'saved_successfully', data: country });
@@ -44,8 +57,12 @@ router.post('/', requireGlobal, async (req, res, next) => {
 router.put('/:id', requireGlobal, async (req, res, next) => {
   try {
     const id = parseInt(req.params.id, 10);
-    await getCountryById(id);  // throws 500→404 if not found (caught below)
+    await getCountryById(id);  // throws AppError(404) if not found
     const { name, timezone } = req.body;
+    if (timezone !== undefined && !isValidIANATimezone(timezone)) {
+      res.status(400).json({ success: false, statusCode: 'INVALID_TIMEZONE', message: 'Zona horaria IANA inválida. Ejemplo: "America/Guatemala".', uiState: 'validation_error' });
+      return;
+    }
     await updateCountry(id, { name, timezone });
     res.json({ success: true, statusCode: 'COUNTRY_UPDATED', message: 'País actualizado.', uiState: 'saved_successfully' });
   } catch (err) { next(err); }

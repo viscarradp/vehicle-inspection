@@ -493,7 +493,7 @@ describe('POST /inspections/:id/photos (uploadPhoto)', () => {
     );
   });
 
-  it('uses photoType from body when provided', async () => {
+  it('uses photoType from body when provided (valid enum value)', async () => {
     mockGetInspection.mockResolvedValueOnce(
       inspectionRow({ localDate: '2026-06-09', shift: 'morning', branchId: 1 }),
     );
@@ -501,11 +501,27 @@ describe('POST /inspections/:id/photos (uploadPhoto)', () => {
       .post('/inspections/100/photos')
       .set('Cookie', cookie)
       .attach('photo', JPEG_BUF, { filename: 'test.jpg', contentType: 'image/jpeg' })
-      .field('photoType', 'damage');
+      .field('photoType', 'exterior_damage');  // valid PhotoType value
     expect(res.status).toBe(200);
     expect(mockStorePhoto).toHaveBeenCalledWith(
-      expect.any(Buffer), expect.any(String), 'damage',
+      expect.any(Buffer), expect.any(String), 'exterior_damage',
     );
+  });
+
+  // ── Security: photoType injection prevention ────────────────────────────────
+  // Client cannot inject arbitrary strings as photoType. Only values from the
+  // PhotoType enum are accepted; any other value → 400 INVALID_PHOTO_TYPE.
+  it('400 when unknown photoType string is provided', async () => {
+    mockGetInspection.mockResolvedValueOnce(
+      inspectionRow({ localDate: '2026-06-09', shift: 'morning', branchId: 1 }),
+    );
+    const res = await request(app)
+      .post('/inspections/100/photos')
+      .set('Cookie', cookie)
+      .attach('photo', JPEG_BUF, { filename: 'test.jpg', contentType: 'image/jpeg' })
+      .field('photoType', 'injected_custom_type');
+    expect(res.status).toBe(400);
+    expect(res.body.statusCode).toBe('INVALID_PHOTO_TYPE');
   });
 
   // ── Security: vehicle identity injection prevention ────────────────────────

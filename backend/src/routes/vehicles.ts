@@ -28,7 +28,12 @@ router.patch('/:id/status', updateVehicleStatus);
 
 router.get('/:id', async (req, res, next) => {
   try {
-    const vehicle = await getVehicleById(req.params.id);
+    const scope   = scopeFromRequest(req);
+    const vehicle = await getVehicleById(req.params.id, scope);
+    if (!vehicle) {
+      res.status(404).json({ success: false, statusCode: 'NOT_FOUND', message: 'Vehículo no encontrado.', uiState: 'not_found' });
+      return;
+    }
     res.json({ success: true, statusCode: 'OK', message: 'Vehículo encontrado.', uiState: 'saved_successfully', data: vehicle });
   } catch (err) { next(err); }
 });
@@ -42,7 +47,8 @@ router.get('/:id/history', async (req, res, next) => {
 
 router.get('/:id/open-issues', async (req, res, next) => {
   try {
-    const issues = await getOpenIssuesByVehicle(req.params.id);
+    const scope  = scopeFromRequest(req);
+    const issues = await getOpenIssuesByVehicle(req.params.id, scope);
     res.json({ success: true, statusCode: 'OK', message: 'Problemas abiertos.', uiState: 'saved_successfully', data: issues });
   } catch (err) { next(err); }
 });

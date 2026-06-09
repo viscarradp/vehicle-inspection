@@ -1,5 +1,6 @@
 import sql from 'mssql';
 import { getConn } from './connection';
+import { AppError } from '../middleware/errorHandler';
 import type { TenantScope } from '../types';
 
 export interface BranchRow {
@@ -59,7 +60,7 @@ export async function getBranchById(id: number): Promise<BranchRow> {
   const result = await req.query(
     `SELECT Id, CountryId, Code, Name, Address, Active FROM Branches WHERE Id = @id`,
   );
-  if (!result.recordset[0]) throw new Error(`Branch ${id} not found`);
+  if (!result.recordset[0]) throw new AppError(404, 'NOT_FOUND', 'Sucursal no encontrada.');
   return toBranch(result.recordset[0]);
 }
 

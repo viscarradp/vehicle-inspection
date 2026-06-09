@@ -81,7 +81,15 @@ export async function uploadPhoto(req: Request, res: Response, next: NextFunctio
       res.status(400).json({ success: false, statusCode: 'FILE_TOO_LARGE', message: `El archivo supera el máximo configurado de ${settings.max_photo_size_mb} MB.`, uiState: 'validation_error' }); return;
     }
 
-    const photoType: PhotoType = (req.body.photoType as PhotoType) ?? 'other';
+    const VALID_PHOTO_TYPES: PhotoType[] = [
+      'odometer', 'exterior_damage', 'interior_damage',
+      'missing_tool', 'cleanliness', 'other', 'non_return_evidence',
+    ];
+    const rawPhotoType = req.body.photoType ?? 'other';
+    if (!(VALID_PHOTO_TYPES as string[]).includes(rawPhotoType)) {
+      res.status(400).json({ success: false, statusCode: 'INVALID_PHOTO_TYPE', message: `Tipo de foto inválido. Permitidos: ${VALID_PHOTO_TYPES.join(', ')}.`, uiState: 'validation_error' }); return;
+    }
+    const photoType = rawPhotoType as PhotoType;
     // Vehicle identity comes from the inspection (server-side), never from the
     // client body — otherwise a photo could be attached with another vehicle's id.
     const plate:     string    = inspection.plate;

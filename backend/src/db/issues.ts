@@ -110,9 +110,31 @@ export async function getIssues(
   return result.recordset.map(toIssue);
 }
 
-export async function getOpenIssuesByVehicle(vehicleId: string): Promise<OpenIssue[]> {
+/**
+ * Lists open issues for a vehicle.
+ *
+ * When `scope` is supplied the query JOINs Vehicles to enforce tenant scope,
+ * preventing cross-branch leakage via the vehicle ID.  Pass scope on every
+ * public-facing call (routes/vehicles.ts).
+ *
+ * When `scope` is omitted (internal use only) all open issues for the vehicle
+ * are returned regardless of branch.  Required for `openIssueController` which
+ * needs the total count across all operators to update the hasOpenIssues flag
+ * after a supervisor closes an issue.
+ */
+export async function getOpenIssuesByVehicle(vehicleId: string, scope?: TenantScope): Promise<OpenIssue[]> {
   const req = getConn();
   req.input('vehicleId', sql.Int, parseInt(vehicleId, 10));
+  if (scope) {
+    const scopeClause = applyScopeWhere(req, scope, 'v.BranchId');
+    const result = await req.query(`
+      SELECT oi.* FROM OpenIssues oi
+      JOIN Vehicles v ON v.Id = oi.VehicleId
+      WHERE oi.VehicleId = @vehicleId AND oi.Status = 'open' AND ${scopeClause}
+      ORDER BY oi.DetectedAt DESC
+    `);
+    return result.recordset.map(toIssue);
+  }
   const result = await req.query(`
     SELECT * FROM OpenIssues
     WHERE VehicleId = @vehicleId AND Status = 'open'

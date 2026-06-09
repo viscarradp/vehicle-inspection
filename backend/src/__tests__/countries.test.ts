@@ -132,6 +132,25 @@ describe('POST /countries', () => {
     expect(res.body.statusCode).toBe('MISSING_FIELDS');
   });
 
+  // ── Security: invalid IANA timezone rejected at input ──────────────────────
+  // An invalid timezone stored in the DB would crash getDateInTimezone() at
+  // runtime on every inspection for that country. Reject it early.
+  it('400 invalid IANA timezone rejected (garbage string)', async () => {
+    const res = await request(app).post('/countries')
+      .set('Cookie', globalCookie)
+      .send({ code: 'XX', name: 'Test', timezone: 'NotATimezone' });
+    expect(res.status).toBe(400);
+    expect(res.body.statusCode).toBe('INVALID_TIMEZONE');
+  });
+
+  it('400 invalid IANA timezone rejected (plausible but wrong format)', async () => {
+    const res = await request(app).post('/countries')
+      .set('Cookie', globalCookie)
+      .send({ code: 'XX', name: 'Test', timezone: 'America/Fake_City_That_Does_Not_Exist' });
+    expect(res.status).toBe(400);
+    expect(res.body.statusCode).toBe('INVALID_TIMEZONE');
+  });
+
   it('201 admin_global creates country', async () => {
     mockCreate.mockResolvedValueOnce(countryRow({ id: 5, code: 'MX', name: 'México', timezone: 'America/Mexico_City' }));
     const res = await request(app).post('/countries')
@@ -169,6 +188,15 @@ describe('PUT /countries/:id', () => {
       .send({ name: 'Guatemala Actualizado', timezone: 'America/Guatemala' });
     expect(res.status).toBe(200);
     expect(res.body.statusCode).toBe('COUNTRY_UPDATED');
+  });
+
+  it('400 invalid IANA timezone rejected on update', async () => {
+    mockGetById.mockResolvedValueOnce(countryRow());
+    const res = await request(app).put('/countries/1')
+      .set('Cookie', globalCookie)
+      .send({ timezone: 'Moon/Base_Alpha' });
+    expect(res.status).toBe(400);
+    expect(res.body.statusCode).toBe('INVALID_TIMEZONE');
   });
 
   it('404 country not found', async () => {

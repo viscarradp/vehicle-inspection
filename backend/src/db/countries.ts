@@ -1,5 +1,6 @@
 import sql from 'mssql';
 import { getConn } from './connection';
+import { AppError } from '../middleware/errorHandler';
 
 export interface CountryRow {
   id:       number;
@@ -33,7 +34,7 @@ export async function getCountryById(id: number): Promise<CountryRow> {
   const result = await req.query(
     `SELECT Id, Code, Name, Timezone, Active FROM Countries WHERE Id = @id`,
   );
-  if (!result.recordset[0]) throw new Error(`Country ${id} not found`);
+  if (!result.recordset[0]) throw new AppError(404, 'NOT_FOUND', 'País no encontrado.');
   return toCountry(result.recordset[0]);
 }
 

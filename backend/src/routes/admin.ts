@@ -113,6 +113,10 @@ router.post('/vehicles', requireAdminLevel, async (req, res, next) => {
 router.put('/vehicles/:id', requireAdminLevel, async (req, res, next) => {
   try {
     const vehicle = await getVehicleById(req.params.id);
+    if (!vehicle) {
+      res.status(404).json({ success: false, statusCode: 'NOT_FOUND', message: 'Vehículo no encontrado.', uiState: 'not_found' });
+      return;
+    }
     await assertResourceInScope(vehicle.branchId, scopeFromRequest(req));
     const { plate, vehicleType, brand, model, year, notes } = req.body;
     const identifiers = resolveVehicleIdentifiersForUpdate(req.body);
@@ -143,6 +147,10 @@ router.put('/vehicles/:id', requireAdminLevel, async (req, res, next) => {
 router.patch('/vehicles/:id/activate', requireAdminLevel, async (req, res, next) => {
   try {
     const vehicle = await getVehicleById(req.params.id);
+    if (!vehicle) {
+      res.status(404).json({ success: false, statusCode: 'NOT_FOUND', message: 'Vehículo no encontrado.', uiState: 'not_found' });
+      return;
+    }
     await assertResourceInScope(vehicle.branchId, scopeFromRequest(req));
     await setVehicleActive(req.params.id, true);
     res.json({ success: true, statusCode: 'VEHICLE_ACTIVATED', message: 'Vehículo activado.', uiState: 'saved_successfully' });
@@ -152,6 +160,10 @@ router.patch('/vehicles/:id/activate', requireAdminLevel, async (req, res, next)
 router.patch('/vehicles/:id/deactivate', requireAdminLevel, async (req, res, next) => {
   try {
     const vehicle = await getVehicleById(req.params.id);
+    if (!vehicle) {
+      res.status(404).json({ success: false, statusCode: 'NOT_FOUND', message: 'Vehículo no encontrado.', uiState: 'not_found' });
+      return;
+    }
     await assertResourceInScope(vehicle.branchId, scopeFromRequest(req));
     await setVehicleActive(req.params.id, false);
     res.json({ success: true, statusCode: 'VEHICLE_DEACTIVATED', message: 'Vehículo desactivado.', uiState: 'saved_successfully' });

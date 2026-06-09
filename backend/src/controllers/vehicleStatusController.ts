@@ -31,6 +31,10 @@ export async function updateVehicleStatus(req: Request, res: Response, next: Nex
 
     const scope   = resolveScope(req.user!);
     const vehicle = await getVehicleById(req.params.id);
+    if (!vehicle) {
+      res.status(404).json({ success: false, statusCode: 'NOT_FOUND', message: 'Vehículo no encontrado.', uiState: 'not_found' });
+      return;
+    }
     await assertResourceInScope(vehicle.branchId, scope);
 
     const { changed, oldStatus } = await setVehicleStatus({

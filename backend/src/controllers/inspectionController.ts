@@ -248,6 +248,10 @@ export async function createOrUpdateInspection(req: Request, res: Response, next
 
     const scope   = resolveScope(req.user!);
     const vehicle = await getVehicleById(data.vehicleId);
+    if (!vehicle) {
+      res.status(404).json({ success: false, statusCode: 'NOT_FOUND', message: 'Vehículo no encontrado.', uiState: 'not_found' });
+      return;
+    }
     // El vehículo debe pertenecer a la sucursal/país del guardia.
     await assertResourceInScope(vehicle.branchId, scope);
     if (vehicle.branchId !== branchId) {
