@@ -76,7 +76,7 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
 
     await updateLastLogin(String(user.id), new Date().toISOString());
 
-    const isProd = process.env.NODE_ENV === 'production';
+    const isHttps = (process.env.PUBLIC_BASE_URL ?? '').startsWith('https://');
     // Parse expiresIn to ms for the cookie maxAge (supports '12h', '7d', '30m', plain seconds)
     const expiresInStr = String(process.env.JWT_EXPIRES_IN ?? '12h');
     const unit = expiresInStr.slice(-1);
@@ -86,8 +86,8 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
 
     res.cookie('vi_token', token, {
       httpOnly: true,
-      secure: isProd,
-      sameSite: isProd ? 'strict' : 'lax',
+      secure: isHttps,
+      sameSite: isHttps ? 'strict' : 'lax',
       maxAge: maxAgeSeconds * 1000,
       path: '/',
     });
