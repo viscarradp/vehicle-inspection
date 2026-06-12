@@ -24,6 +24,7 @@ export function createApp() {
   const app = express();
 
   const isProd = process.env.NODE_ENV === 'production';
+  const isHttps = (process.env.PUBLIC_BASE_URL ?? '').startsWith('https://');
 
   // ── Trust proxy (nginx sits in front) ───────────────────────────
   if (isProd) app.set('trust proxy', 1);
@@ -39,10 +40,10 @@ export function createApp() {
         imgSrc: ["'self'", 'data:', 'blob:'],
         connectSrc: ["'self'"],
         objectSrc: ["'none'"],
-        upgradeInsecureRequests: isProd ? [] : null,
+        upgradeInsecureRequests: isHttps ? [] : null,
       },
     } : false,
-    hsts: isProd ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+    hsts: isHttps ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     crossOriginOpenerPolicy: { policy: 'same-origin' },
   }));
