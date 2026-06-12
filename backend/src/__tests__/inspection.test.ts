@@ -77,7 +77,7 @@ jest.mock('../db/scopeUtils', () => ({
 import { createApp } from '../config/app';
 import {
   createInspection, updateInspection, getInspectionById,
-  getInspectionForShift, getInspectionsByDate,
+  getInspectionForShift, getInspectionsByDate, deleteDraft,
 } from '../db/inspections';
 import {
   getActiveVehicles, getVehicleById, refreshVehicleMileage,
@@ -95,6 +95,7 @@ const mockUpdateInspection     = updateInspection        as jest.MockedFunction<
 const mockGetInspectionById    = getInspectionById       as jest.MockedFunction<typeof getInspectionById>;
 const mockGetInspectionForShift = getInspectionForShift  as jest.MockedFunction<typeof getInspectionForShift>;
 const mockGetInspectionsByDate = getInspectionsByDate    as jest.MockedFunction<typeof getInspectionsByDate>;
+const mockDeleteDraft          = deleteDraft             as jest.MockedFunction<typeof deleteDraft>;
 const mockGetActiveVehicles    = getActiveVehicles       as jest.MockedFunction<typeof getActiveVehicles>;
 const mockGetVehicleById       = getVehicleById          as jest.MockedFunction<typeof getVehicleById>;
 const mockRefreshMileage       = refreshVehicleMileage   as jest.MockedFunction<typeof refreshVehicleMileage>;
@@ -134,6 +135,7 @@ beforeEach(() => {
   mockSetVehicleStatus.mockResolvedValue({ changed: false, oldStatus: 'active' });
   mockCreateIssue.mockResolvedValue({ id: '200' });
   mockCreateAuditLog.mockResolvedValue(undefined);
+  mockDeleteDraft.mockResolvedValue(true);
   // Default: mileage is normal, no warning.
   mockValidateMileage.mockResolvedValue({
     hasWarning: false, warningType: 'none', previousMileage: 50000, difference: 1000,
@@ -259,6 +261,20 @@ describe('GET /inspections/dashboard', () => {
         .set('Cookie', authCookie());
       expect(res.body.data.counts.seen).toBe(2);
       expect(res.body.data.counts.unseen).toBe(0);
+    });
+
+    it('draft inspection → card exposes draft, todayRecord.kind stays none, not counted as seen', async () => {
+      mockGetInspectionsByDate.mockResolvedValue([
+        inspectionRow({ id: '300', vehicleId: '10', lifecycleStatus: 'draft' }),
+      ]);
+      const res = await request(app)
+        .get('/inspections/dashboard')
+        .set('Cookie', authCookie());
+      const card = res.body.data.vehicles[0];
+      expect(card.draft).toMatchObject({ inspectionId: '300' });
+      expect(card.todayRecord.kind).toBe('none');         // un borrador no es registro
+      expect(res.body.data.counts.seen).toBe(0);
+      expect(res.body.data.counts.unseen).toBe(1);
     });
   });
 
@@ -625,6 +641,78 @@ describe('POST /inspections', () => {
     });
   });
 
+  describe('draft (intent=draft)', () => {
+    it('draft with incomplete body (no driver/mileage/fuel) → 200 INSPECTION_DRAFT_SAVED', async () => {
+      const res = await request(app)
+        .post('/inspections')
+        .set('Cookie', authCookie())
+        .send({ vehicleId: '10', plate: 'ABC-123', returnStatus: 'received', intent: 'draft' });
+      expect(res.status).toBe(200);
+      expect(res.body.statusCode).toBe('INSPECTION_DRAFT_SAVED');
+      expect(res.body.data.lifecycleStatus).toBe('draft');
+    });
+
+    it('draft persists with lifecycleStatus=draft', async () => {
+      await request(app)
+        .post('/inspections')
+        .set('Cookie', authCookie())
+        .send({ ...receivedBody, intent: 'draft' });
+      expect(mockCreateInspection).toHaveBeenCalledWith(
+        expect.objectContaining({ lifecycleStatus: 'draft' }),
+      );
+    });
+
+    it('draft with damage does NOT create an issue', async () => {
+      await request(app)
+        .post('/inspections')
+        .set('Cookie', authCookie())
+        .send({ ...receivedBody, intent: 'draft', exteriorGeneralStatus: 'damaged', generalObservation: 'Golpe' });
+      expect(mockCreateIssue).not.toHaveBeenCalled();
+      expect(mockSetOpenIssuesFlag).not.toHaveBeenCalled();
+    });
+
+    it('draft does NOT refresh vehicle mileage nor change vehicle status', async () => {
+      mockGetVehicleById.mockResolvedValue(vehicleRow({ currentStatus: 'workshop' }));
+      await request(app)
+        .post('/inspections')
+        .set('Cookie', authCookie())
+        .send({ ...receivedBody, intent: 'draft' });
+      expect(mockRefreshMileage).not.toHaveBeenCalled();
+      expect(mockSetVehicleStatus).not.toHaveBeenCalled();
+    });
+
+    it('draft does NOT trigger mileage warning even when km is lower', async () => {
+      mockValidateMileage.mockResolvedValue({
+        hasWarning: true, warningType: 'lower_than_previous',
+        warningMessage: 'menor', previousMileage: 50000, difference: -1000,
+      });
+      const res = await request(app)
+        .post('/inspections')
+        .set('Cookie', authCookie())
+        .send({ ...receivedBody, intent: 'draft', mileage: 49000 });
+      expect(res.status).toBe(200);
+      expect(res.body.statusCode).toBe('INSPECTION_DRAFT_SAVED');
+    });
+
+    it('finalizing a draft with damage DOES create the issue (draft→final transition)', async () => {
+      // El borrador previo nunca creó issue, aunque tenga hasNewIssue=true.
+      mockGetInspectionForShift.mockResolvedValue(
+        inspectionRow({ lifecycleStatus: 'draft', hasNewIssue: true }),
+      );
+      const res = await request(app)
+        .post('/inspections')
+        .set('Cookie', authCookie())
+        .send({ ...receivedBody, exteriorGeneralStatus: 'damaged', generalObservation: 'Golpe' });
+      expect(res.status).toBe(200);
+      expect(res.body.statusCode).toBe('INSPECTION_SAVED_WITH_ISSUE');
+      expect(mockCreateIssue).toHaveBeenCalledTimes(1);
+      expect(mockUpdateInspection).toHaveBeenCalledWith(
+        '100',
+        expect.objectContaining({ lifecycleStatus: 'final' }),
+      );
+    });
+  });
+
   describe('vehicle status side-effects', () => {
     it('vehicle received while in workshop status → setVehicleStatus called to active', async () => {
       mockGetVehicleById.mockResolvedValue(vehicleRow({ currentStatus: 'workshop' }));
@@ -889,6 +977,52 @@ describe('PATCH /inspections/:id', () => {
         .send({ ...receivedBody, modificationReason: 'test' });
       expect(res.status).toBe(500);
     });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+describe('DELETE /inspections/:id (discard draft)', () => {
+  it('no token → 401', async () => {
+    const res = await request(app).delete('/inspections/100');
+    expect(res.status).toBe(401);
+  });
+
+  it('not found → 404', async () => {
+    mockGetInspectionById.mockResolvedValue(null);
+    const res = await request(app)
+      .delete('/inspections/999')
+      .set('Cookie', authCookie());
+    expect(res.status).toBe(404);
+    expect(res.body.statusCode).toBe('NOT_FOUND');
+  });
+
+  it('finalized inspection → 409 NOT_A_DRAFT, deleteDraft not called', async () => {
+    mockGetInspectionById.mockResolvedValue(inspectionRow({ lifecycleStatus: 'final' }));
+    const res = await request(app)
+      .delete('/inspections/100')
+      .set('Cookie', authCookie());
+    expect(res.status).toBe(409);
+    expect(res.body.statusCode).toBe('NOT_A_DRAFT');
+    expect(mockDeleteDraft).not.toHaveBeenCalled();
+  });
+
+  it('draft → 200 DRAFT_DISCARDED, deleteDraft called', async () => {
+    mockGetInspectionById.mockResolvedValue(inspectionRow({ lifecycleStatus: 'draft' }));
+    const res = await request(app)
+      .delete('/inspections/100')
+      .set('Cookie', authCookie());
+    expect(res.status).toBe(200);
+    expect(res.body.statusCode).toBe('DRAFT_DISCARDED');
+    expect(mockDeleteDraft).toHaveBeenCalledWith('100');
+  });
+
+  it('DB failure → 500', async () => {
+    mockGetInspectionById.mockResolvedValue(inspectionRow({ lifecycleStatus: 'draft' }));
+    mockDeleteDraft.mockRejectedValue(new Error('db down'));
+    const res = await request(app)
+      .delete('/inspections/100')
+      .set('Cookie', authCookie());
+    expect(res.status).toBe(500);
   });
 });
 

@@ -1,4 +1,4 @@
-import { ArrowRight, Check, AlertTriangle, RotateCcw, MinusCircle, HelpCircle } from 'lucide-react';
+import { ArrowRight, Check, AlertTriangle, RotateCcw, MinusCircle, HelpCircle, FileEdit, Trash2, Send, FileText } from 'lucide-react';
 
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,12 +25,16 @@ interface Props {
   onInspeccionar:  () => void;
   onEstadoEspecial: () => void;
   onNoSalio:        () => void;
+  onEnviarBorrador:    () => void;
+  onDescartarBorrador: () => void;
+  onVerReporte:        () => void;
 }
 
-export function VehicleCard({ card, statusTypes, justRevisado, onInspeccionar, onEstadoEspecial, onNoSalio }: Props) {
+export function VehicleCard({ card, statusTypes, justRevisado, onInspeccionar, onEstadoEspecial, onNoSalio, onEnviarBorrador, onDescartarBorrador, onVerReporte }: Props) {
   const { todayRecord, currentStatus } = card;
   const isAbsent    = currentStatus !== 'active';
   const kind        = todayRecord.kind;
+  const hasDraft    = !!card.draft;
 
   // Estilo del badge/banner principal
   const headerStyle = isAbsent
@@ -56,7 +60,11 @@ export function VehicleCard({ card, statusTypes, justRevisado, onInspeccionar, o
           </div>
         </div>
 
-        {isAbsent ? (
+        {hasDraft && !isAbsent && kind === 'none' ? (
+          <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+            Borrador pendiente
+          </span>
+        ) : isAbsent ? (
           <StatusBadge status={currentStatus} statusTypes={statusTypes} className="shrink-0" />
         ) : kind === 'received' ? (
           <StatusBadge status={todayRecord.inspectionStatus ?? 'reviewed_ok'} className="shrink-0" />
@@ -108,6 +116,14 @@ export function VehicleCard({ card, statusTypes, justRevisado, onInspeccionar, o
         </div>
       )}
 
+      {/* ── Banner de borrador pendiente ── */}
+      {hasDraft && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
+          <FileEdit className="h-3.5 w-3.5 shrink-0" />
+          Borrador sin finalizar
+        </div>
+      )}
+
       {/* ── Aviso de daño abierto ── */}
       {card.hasOpenIssues && (
         <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
@@ -126,7 +142,24 @@ export function VehicleCard({ card, statusTypes, justRevisado, onInspeccionar, o
 
       {/* ── Acciones ── */}
       <div className="mt-auto flex flex-col gap-2">
-        {isAbsent ? (
+        {hasDraft ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <Button size="touch" variant="outline" className="w-full text-base" onClick={onInspeccionar}>
+                <FileEdit className="h-4 w-4" />
+                Editar
+              </Button>
+              <Button size="touch" className="w-full text-base" onClick={onEnviarBorrador}>
+                <Send className="h-4 w-4" />
+                Enviar
+              </Button>
+            </div>
+            <Button size="touch" variant="outline" className="w-full text-sm text-red-600 hover:text-red-700" onClick={onDescartarBorrador}>
+              <Trash2 className="h-4 w-4" />
+              Descartar borrador
+            </Button>
+          </>
+        ) : isAbsent ? (
           <>
             <Button size="touch" className="w-full" onClick={onInspeccionar}>
               Ya regresó — Inspeccionar
@@ -142,6 +175,10 @@ export function VehicleCard({ card, statusTypes, justRevisado, onInspeccionar, o
               <Check className="h-3.5 w-3.5 shrink-0" />
               Registrado hoy
             </div>
+            <Button size="touch" variant="outline" className="w-full text-sm" onClick={onVerReporte}>
+              <FileText className="h-4 w-4" />
+              Ver reporte
+            </Button>
             <Button size="touch" variant="outline" className="w-full text-sm" onClick={onInspeccionar}>
               Nueva salida
               <ArrowRight className="h-4 w-4" />

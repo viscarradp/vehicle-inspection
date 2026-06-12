@@ -118,6 +118,13 @@ export type InspectionStatus =
   | 'not_returned'
   | 'other';
 
+/**
+ * Ciclo de vida del evento (v2.2). 'draft' = borrador en captura (invisible a
+ * reportes, kilometraje antifraude, conteo visto/no-visto y creación de issues);
+ * 'final' = registrado. DEFAULT 'final' en BD preserva todo el comportamiento previo.
+ */
+export type LifecycleStatus = 'draft' | 'final';
+
 export type FuelLevel = 'empty' | 'quarter' | 'half' | 'three_quarters' | 'full';
 export type CleanlinessStatus = 'clean' | 'acceptable' | 'dirty' | 'very_dirty';
 export type GeneralStatus = 'ok' | 'observed' | 'damaged';
@@ -138,6 +145,7 @@ export interface Inspection {
   finalDriverNameManual?: string;
   returnStatus: ReturnStatus;
   status: InspectionStatus;
+  lifecycleStatus: LifecycleStatus;  // 'draft' | 'final' (v2.2)
   authorizedBy?: string;
   expectedReturnDate?: string;
   mileage?: number;
@@ -286,6 +294,11 @@ export interface VehicleDashboardCard {
     kind: TodayRecordKind;
     inspectionId?: string;
     inspectionStatus?: InspectionStatus; // solo cuando kind === 'received'
+  };
+  /** Borrador de inspección pendiente en este bucket (turno actual), si existe. */
+  draft?: {
+    inspectionId: string;
+    updatedAt: string;
   };
   lastInspectionDate?: string;
   daysSinceLastReview?: number;

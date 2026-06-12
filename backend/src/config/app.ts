@@ -75,8 +75,8 @@ export function createApp() {
   // ── Rate limiters ────────────────────────────────────────────────
   // Global: 200 req / 15 min per IP across all API routes
   const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 200,
+    windowMs: 5 * 60 * 1000,
+    max: 500,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, statusCode: 'RATE_LIMITED', message: 'Demasiadas solicitudes. Intente más tarde.' },

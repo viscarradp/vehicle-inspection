@@ -6,6 +6,7 @@ import {
   createOrUpdateInspection,
   editInspection,
   getInspection,
+  discardDraft,
 } from '../controllers/inspectionController';
 import { upload, uploadPhoto, getInspectionPhotos } from '../controllers/photoController';
 
@@ -17,6 +18,7 @@ router.get('/dashboard', requireValidBranchContext, getGuardDashboard);
 
 router.post('/', createOrUpdateInspection);            // registrar/actualizar en el turno actual (guardia)
 router.patch('/:id', editInspection);                  // editar por id (supervisor; sellado si turno pasado)
+router.delete('/:id', discardDraft);                   // descartar un borrador (solo lifecycleStatus='draft')
 router.get('/:id', getInspection);
 router.post('/:id/photos', upload.single('photo'), uploadPhoto);
 router.get('/:id/photos', getInspectionPhotos);

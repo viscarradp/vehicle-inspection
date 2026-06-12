@@ -75,7 +75,7 @@ export function OpsShell() {
         <div className="flex items-center gap-3 border-b border-white/10 px-5 py-4">
           <BrandLogo size={36} />
           <div>
-            <div className="text-sm font-bold leading-tight text-white">Vehicle Inspection</div>
+            <div className="text-sm font-bold leading-tight text-white">Gestion Vehicular</div>
             <div className="text-xs text-white/50">ConstruMarket</div>
           </div>
         </div>

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import { getPool, getConn, closePool, withScriptContext } from '../db/connection';
 import { createVehicle, getActiveVehicles } from '../db/vehicles';
-import { createUser, findUserByUsername } from '../db/users';
+import { createUser, updateUser, findUserByUsername } from '../db/users';
 import type { TenantScope, UserRole } from '../types';
 
 // La contraseña del superadmin se lee de variable de entorno para no quedar en git.
@@ -90,13 +90,17 @@ async function seedProductionVehicles() {
 
       console.log('Sucursales encontradas:', branchMap);
 
-      // 2. Crear superadmin
+      // 2. Crear o restablecer el superadmin
+      // Operaciones.sql inserta 'admin' con un hash PLACEHOLDER que no corresponde
+      // a ninguna contraseña. Si solo omitiéramos cuando ya existe, el admin nunca
+      // podría iniciar sesión en producción. Por eso, si ya existe, sobreescribimos
+      // su hash con el de ADMIN_PASSWORD y normalizamos rol/scope a admin_global.
       console.log('\nVerificando/creando usuario Super Admin...');
       const superAdminUser = 'admin';
       const existingAdmin = await findUserByUsername(superAdminUser);
+      const hash = await bcrypt.hash(ADMIN_PASSWORD!, 12);
 
       if (!existingAdmin) {
-        const hash = await bcrypt.hash(ADMIN_PASSWORD!, 12);
         await createUser({
           username: superAdminUser,
           fullName: 'Administrador Global',
@@ -107,7 +111,15 @@ async function seedProductionVehicles() {
         });
         console.log(`[CREADO] Super Admin '${superAdminUser}'.`);
       } else {
-        console.log(`[OMITIDO] El usuario '${superAdminUser}' ya existe.`);
+        await updateUser(String(existingAdmin.id), {
+          fullName: 'Administrador Global',
+          role: 'admin_global' as UserRole,
+          active: true,
+          passwordHash: hash,
+          branchId: null,   // admin_global: CK_Users_RoleScope exige Branch/Country NULL
+          countryId: null
+        });
+        console.log(`[ACTUALIZADO] Contraseña del Super Admin '${superAdminUser}' restablecida desde ADMIN_PASSWORD.`);
       }
 
       console.log('\nIniciando carga de vehículos...');

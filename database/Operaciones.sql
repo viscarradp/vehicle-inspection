@@ -348,7 +348,13 @@ BEGIN
         ModifiedReason              NVARCHAR(500)   NULL,
         -- Dirección del evento (v2.1): 'entry' hoy; 'exit' cuando se implemente salida
         Direction                   NVARCHAR(10)    NOT NULL DEFAULT 'entry'
-                                        CHECK(Direction IN ('entry', 'exit'))
+                                        CHECK(Direction IN ('entry', 'exit')),
+        -- Ciclo de vida (v2.2): 'draft' = borrador en captura, 'final' = registrado.
+        -- DEFAULT 'final' preserva todo el comportamiento previo: las rutas de
+        -- escritura que no lo especifican producen registros finales. Solo la
+        -- inspección completa de recepción usa el flujo borrador→preview→final.
+        LifecycleStatus             NVARCHAR(10)    NOT NULL DEFAULT 'final'
+                                        CHECK(LifecycleStatus IN ('draft', 'final'))
     );
     CREATE INDEX IX_Inspections_Branch_Date_Shift ON Inspections(BranchId, LocalDate, Shift);
     CREATE INDEX IX_Inspections_Vehicle_Date      ON Inspections(VehicleId, LocalDate);
@@ -357,8 +363,24 @@ BEGIN
     -- Índice único de bucket: 1 entry + 1 exit por vehículo/turno como máximo
     CREATE UNIQUE INDEX UX_Inspections_Bucket
         ON Inspections (BranchId, VehicleId, LocalDate, Shift, Direction);
+    -- Índice filtrado para listar borradores pendientes en el dashboard
+    CREATE INDEX IX_Inspections_Draft
+        ON Inspections (BranchId, LocalDate) WHERE LifecycleStatus = 'draft';
     PRINT 'Tabla Inspections creada.';
 END
+GO
+
+-- Auto-sanación para bases creadas ANTES de la v2.2 (idempotente): el bloque
+-- CREATE TABLE de arriba se salta si Inspections ya existe, así que la columna
+-- LifecycleStatus y su índice filtrado se aseguran aquí por separado. Necesario
+-- porque vw_InspectionsFull (más abajo) referencia esta columna en su WHERE.
+IF COL_LENGTH('dbo.Inspections', 'LifecycleStatus') IS NULL
+    ALTER TABLE dbo.Inspections ADD LifecycleStatus NVARCHAR(10) NOT NULL
+        CONSTRAINT DF_Inspections_LifecycleStatus DEFAULT 'final'
+        CONSTRAINT CK_Inspections_LifecycleStatus CHECK (LifecycleStatus IN ('draft', 'final'));
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Inspections_Draft' AND object_id = OBJECT_ID('dbo.Inspections'))
+    CREATE INDEX IX_Inspections_Draft ON dbo.Inspections (BranchId, LocalDate) WHERE LifecycleStatus = 'draft';
 GO
 
 -- ============================================================
@@ -569,7 +591,8 @@ SELECT
     c.Code   AS CountryCode
 FROM Inspections i
 JOIN Branches b ON i.BranchId = b.Id
-JOIN Countries c ON b.CountryId = c.Id;
+JOIN Countries c ON b.CountryId = c.Id
+WHERE i.LifecycleStatus = 'final';
 GO
 
 CREATE OR ALTER VIEW vw_VehiclesFull AS
@@ -646,6 +669,23 @@ GO
 -- ── Schema de seguridad ───────────────────────────────────────
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'Security')
     EXEC('CREATE SCHEMA Security');
+GO
+
+-- ── Re-ejecutabilidad: soltar las políticas ANTES de (re)crear las funciones ──
+-- Las funciones RLS son WITH SCHEMABINDING y están referenciadas por las
+-- SECURITY POLICY. SQL Server prohíbe ALTER de una función schemabound mientras
+-- una política la referencia (error 3729). En una RE-EJECUCIÓN de este script,
+-- el "CREATE OR ALTER FUNCTION" de abajo intentaría ALTER y fallaría con:
+--   "Cannot ALTER 'Security.fn_BranchFilter' because it is being referenced
+--    by object 'VehiclesPolicy'."
+-- Se sueltan aquí (idempotente: IF EXISTS) y los bloques IF NOT EXISTS de más
+-- abajo las recrean. En la PRIMERA ejecución aún no existen → no-op.
+DROP SECURITY POLICY IF EXISTS Security.VehiclesPolicy;
+DROP SECURITY POLICY IF EXISTS Security.InspectionsPolicy;
+DROP SECURITY POLICY IF EXISTS Security.DriversPolicy;
+DROP SECURITY POLICY IF EXISTS Security.OpenIssuesPolicy;
+DROP SECURITY POLICY IF EXISTS Security.PhotosPolicy;
+DROP SECURITY POLICY IF EXISTS Security.VehicleStatusLogPolicy;
 GO
 
 -- ── fn_BranchFilter ──────────────────────────────────────────

@@ -179,12 +179,13 @@ export async function refreshVehicleMileage(vehicleId: string): Promise<void> {
           SELECT TOP 1 Mileage
           FROM   Inspections
           WHERE  VehicleId = @id AND Mileage IS NOT NULL
+            AND  LifecycleStatus = 'final'
           ORDER  BY CreatedAt DESC
         ), LastMileage),
         LastInspectionDate = ISNULL((
           SELECT MAX(CreatedAt)
           FROM   Inspections
-          WHERE  VehicleId = @id
+          WHERE  VehicleId = @id AND LifecycleStatus = 'final'
         ), LastInspectionDate),
         UpdatedAt = SYSUTCDATETIME()
     WHERE Id = @id

@@ -40,6 +40,12 @@ export const inspectionApi = {
     data.inspectionId
       ? api.patch(`/inspections/${data.inspectionId}`, data)
       : api.post('/inspections', data),
+  // Guarda un borrador (upsert por bucket del turno actual). Sin validación
+  // bloqueante ni efectos colaterales — el registro queda en lifecycleStatus='draft'.
+  saveDraft: (data: InspectionFormData) =>
+    api.post('/inspections', { ...data, intent: 'draft' }),
+  // Descarta un borrador. Solo aplica a registros en estado 'draft'.
+  discard: (id: string) => api.delete(`/inspections/${id}`),
   get:  (id: string) => api.get(`/inspections/${id}`),
 };
 

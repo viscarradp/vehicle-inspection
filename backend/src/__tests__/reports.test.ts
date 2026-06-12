@@ -207,15 +207,20 @@ describe('GET /reports/open-issues', () => {
 describe('GET /reports/no-review', () => {
   const cookie = supervisorCookie();
 
-  const today = '2026-06-09';
-  // For threshold = 3 days: cutoff = 2026-06-06. Vehicles with lastInspectionDate <= cutoff
-  // or no lastInspectionDate are returned.
+  // La ruta calcula el cutoff con `new Date()` real, así que las fechas del test
+  // se construyen relativas a hoy — de lo contrario el test se rompe según el día
+  // en que se ejecute (cutoff = hoy - days).
+  const daysAgo = (n: number): string => {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return d.toISOString();
+  };
 
   it('200 filters vehicles without recent inspection', async () => {
     const vehicles = [
-      vehicleRow({ lastInspectionDate: '2026-06-03T00:00:00Z' } as any), // old enough
-      vehicleRow({ id: '11', lastInspectionDate: '2026-06-09T00:00:00Z' } as any), // recent
-      vehicleRow({ id: '12' }), // no lastInspectionDate
+      vehicleRow({ lastInspectionDate: daysAgo(10) } as any),            // suficientemente viejo
+      vehicleRow({ id: '11', lastInspectionDate: daysAgo(0) } as any),   // reciente (hoy)
+      vehicleRow({ id: '12' }),                                          // sin lastInspectionDate
     ];
     mockGetActive.mockResolvedValueOnce(vehicles);
     const res = await request(app).get('/reports/no-review?days=3').set('Cookie', cookie);

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import {
   AlertTriangle, Check, Camera,
-  ChevronLeft, ChevronRight, Loader2,
+  ChevronLeft, ChevronRight, Loader2, Send,
 } from 'lucide-react';
 import { inspectionApi, driverApi, photoApi } from '../api/endpoints';
 import { InspectionFormData, Driver, MileageWarning, VehicleDashboardCard } from '../types';
@@ -25,6 +25,7 @@ const BLOCKS = [
   { k: '8',  t: 'Daño interior' },
   { k: '9',  t: 'Observación' },
   { k: '10', t: 'Fotos' },
+  { k: '✓',  t: 'Revisar' },
 ];
 
 const FUEL_OPTS  = ['Vacío', '1/4', '1/2', '3/4', 'Lleno'];
@@ -455,6 +456,109 @@ function Block10({ files, setFiles }: {
   );
 }
 
+// ─── Block 11 — Preview / Revisar ─────────────────────────────────────────────
+
+function PreviewRow({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-2.5">
+      <span className="shrink-0 text-sm text-muted-foreground">{label}</span>
+      <span className={cn('text-right text-base font-medium', warn && 'text-red-600')}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function BlockPreview({
+  driverName, km, prevKm, fuel, clean, tools, extDmg, intDmg, obs, photoFiles, isDraftFlow,
+}: {
+  driverName: string;
+  km: string;
+  prevKm: number;
+  fuel: number;
+  clean: number;
+  tools: Record<string, ToolState>;
+  extDmg: Record<string, boolean>;
+  intDmg: Record<string, boolean>;
+  obs: string;
+  photoFiles: Record<string, File | null>;
+  /** Flujo de guardia: el envío se hace desde el panel, no aquí. */
+  isDraftFlow: boolean;
+}) {
+  const kmVal   = parseInt(km || '0', 10);
+  const kmDiff  = kmVal - prevKm;
+  const kmWarn  = kmVal > 0 && kmVal < prevKm;
+  const extList = Object.keys(extDmg).filter(k => extDmg[k]);
+  const intList = Object.keys(intDmg).filter(k => intDmg[k]);
+  const toolBad = TOOLS_LIST.filter(t => tools[t] === 'falta' || tools[t] === 'dañado');
+  const photos  = Object.entries(photoFiles).filter(([, f]) => f !== null);
+  const hasFindings = extList.length > 0 || intList.length > 0 || toolBad.length > 0;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <p className="text-sm text-muted-foreground">
+        Revisa el reporte. Puedes volver a cualquier paso para corregir.
+      </p>
+
+      {isDraftFlow && (
+        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4">
+          <Send className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+          <div>
+            <p className="font-semibold text-blue-800">Este reporte aún no se envía</p>
+            <p className="mt-0.5 text-sm text-blue-700">
+              Guarda el borrador y, en el panel, presiona <strong>Enviar</strong> en la
+              tarjeta del vehículo para registrar la revisión.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="divide-y divide-border rounded-lg border border-border bg-muted/30 px-4">
+        <PreviewRow label="Conductor" value={driverName || '— sin asignar'} warn={!driverName} />
+        <PreviewRow
+          label="Kilometraje"
+          value={kmVal > 0 ? `${kmVal.toLocaleString('es-GT')} km (${kmDiff >= 0 ? '+' : ''}${kmDiff.toLocaleString('es-GT')})` : '— sin lectura'}
+          warn={kmVal <= 0 || kmWarn}
+        />
+        <PreviewRow label="Combustible" value={FUEL_OPTS[fuel]} />
+        <PreviewRow label="Limpieza" value={CLEAN_OPTS[clean].t} />
+        <PreviewRow
+          label="Herramientas"
+          value={toolBad.length ? `${toolBad.length} con faltante/daño` : 'Completas'}
+          warn={toolBad.length > 0}
+        />
+        <PreviewRow
+          label="Daño exterior"
+          value={extList.length ? extList.join(', ') : 'Sin daños'}
+          warn={extList.length > 0}
+        />
+        <PreviewRow
+          label="Daño interior"
+          value={intList.length ? intList.join(', ') : 'Sin daños'}
+          warn={intList.length > 0}
+        />
+        <PreviewRow label="Fotos" value={photos.length ? `${photos.length} adjunta(s)` : 'Ninguna'} />
+      </div>
+
+      {obs.trim() && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="mb-1 text-sm font-medium text-muted-foreground">Observación</p>
+          <p className="whitespace-pre-line text-base leading-relaxed">{obs}</p>
+        </div>
+      )}
+
+      {hasFindings && photos.length === 0 && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <p className="text-sm text-amber-800">
+            Hay daños o faltantes registrados. Se requiere al menos una foto para finalizar.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface Props {
@@ -482,6 +586,9 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
   const [kmModal, setKmModal]                 = useState<MileageWarning | null>(null);
   const [kmModalSource, setKmModalSource]     = useState<'local' | 'api'>('local');
   const [photoFiles, setPhotoFiles]           = useState<Record<string, File | null>>({});
+  // True si el borrador precargado ya tiene fotos en el servidor (no se rehidratan
+  // como File). Evita re-exigir foto al finalizar un borrador con daño que ya la tenía.
+  const [serverHasPhotos, setServerHasPhotos] = useState(false);
   const [showModifyModal, setShowModifyModal] = useState(false);
   const [modifyReason, setModifyReason]       = useState('');
 
@@ -508,8 +615,6 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
   const [intDmg, setIntDmg] = useState<Record<string, boolean>>({});
   const [obs, setObs]       = useState('');
 
-  const DRAFT_KEY = `vi_draft_${loadFromId ?? card.vehicleId}`;
-
   useEffect(() => {
     setVisitedSteps(prev => new Set([...prev, step]));
   }, [step]);
@@ -528,43 +633,15 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
     if (insp.cleanlinessStatus)  setClean(CLEAN_IDX[insp.cleanlinessStatus as string] ?? 0);
     if (insp.generalObservation) setObs(insp.generalObservation as string);
     if (typeof insp.previousMileage === 'number') setPrevKm(insp.previousMileage);
+    if (insp.hasPhotos) setServerHasPhotos(true);
   };
 
-  const serializeDraft = () => ({
-    driver, otherDriver, km, fuel, clean, tools, extDmg, intDmg, obs, step, prevKm,
-  });
-
-  const restoreFromDraft = (d: ReturnType<typeof serializeDraft>) => {
-    if (d.driver)       setDriver(d.driver);
-    if (d.otherDriver)  setOtherDriver(d.otherDriver);
-    if (d.km)           setKm(d.km);
-    if (d.fuel  !== undefined) setFuel(d.fuel);
-    if (d.clean !== undefined) setClean(d.clean);
-    if (d.tools)  setTools(d.tools);
-    if (d.extDmg) setExtDmg(d.extDmg);
-    if (d.intDmg) setIntDmg(d.intDmg);
-    if (d.obs)    setObs(d.obs);
-    if (d.step  !== undefined) setStep(d.step);
-    if (d.prevKm !== undefined) setPrevKm(d.prevKm);
-  };
-
+  // El borrador vive en el servidor (fuente única de verdad, visible entre
+  // dispositivos y en el dashboard). Al precargar siempre se trae de la API.
   useEffect(() => {
     driverApi.list().then(r => setDrivers(r.data.data as Driver[])).catch(() => {});
 
     if (!loadFromId) { setLoadingData(false); return; }
-
-    if (isSealed) {
-      inspectionApi.get(loadFromId)
-        .then(r => populateFromInspection(r.data.data as Record<string, unknown>))
-        .catch(() => {})
-        .finally(() => setLoadingData(false));
-      return;
-    }
-
-    try {
-      const saved = localStorage.getItem(DRAFT_KEY);
-      if (saved) { restoreFromDraft(JSON.parse(saved)); setLoadingData(false); return; }
-    } catch { localStorage.removeItem(DRAFT_KEY); }
 
     inspectionApi.get(loadFromId)
       .then(r => populateFromInspection(r.data.data as Record<string, unknown>))
@@ -572,16 +649,6 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
       .finally(() => setLoadingData(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Auto-save draft (solo al precargar un registro editable y no sellado)
-  useEffect(() => {
-    if (loadingData || !loadFromId || isSealed) return;
-    const timer = setTimeout(() => {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(serializeDraft()));
-    }, 1200);
-    return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [driver, otherDriver, km, fuel, clean, tools, extDmg, intDmg, obs, step]);
 
   const kmVal  = parseInt(km || '0', 10);
   const kmDiff = kmVal - prevKm;
@@ -595,7 +662,7 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
     Object.values(intDmg).some(Boolean) ||
     TOOLS_LIST.some(t => tools[t] === 'falta' || tools[t] === 'dañado');
 
-  const hasAnyPhoto = Object.values(photoFiles).some(Boolean);
+  const hasAnyPhoto = Object.values(photoFiles).some(Boolean) || serverHasPhotos;
 
   // A step is "answered" if it has meaningful data — drives the chip ✓ / ! indicator
   const blockHasData = useCallback((i: number): boolean => {
@@ -608,7 +675,7 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
     }
   }, [driver, km, kmVal, visitedSteps, hasDamageOrMissing, hasAnyPhoto]);
 
-  const buildData = (): InspectionFormData => {
+  const buildData = (intent: 'draft' | 'final' = 'final'): InspectionFormData => {
     const extList  = Object.keys(extDmg).filter(k => extDmg[k]).join(', ');
     const intList  = Object.keys(intDmg).filter(k => intDmg[k]).join(', ');
     const toolBad  = TOOLS_LIST.filter(t => tools[t] === 'falta' || tools[t] === 'dañado').join(', ');
@@ -627,6 +694,7 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
     return {
       // Solo presente en edición por supervisor → endpoints.save usa PATCH /:id.
       inspectionId: editById ? loadFromId : undefined,
+      intent,
       vehicleId: card.vehicleId,
       plate: card.plate,
       // Guardia: siempre 'received' (abrió el formulario para inspeccionar/recibir).
@@ -644,6 +712,30 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
       mileageWarningConfirmed: !!kmJustification,
       mileageWarningObservation: kmJustification || undefined,
     };
+  };
+
+  // Sube las fotos capturadas (en memoria) contra el id de inspección.
+  // Compartida por el guardado final y el de borrador.
+  const uploadPhotos = async (inspectionId: string) => {
+    const uploads = Object.entries(photoFiles).filter(([, f]) => f !== null);
+    if (uploads.length === 0) return;
+    const pt = toast.loading(`Subiendo ${uploads.length} foto(s)…`);
+    let failedCount = 0;
+    for (const [type, file] of uploads) {
+      try {
+        await photoApi.upload(inspectionId, file as File, type, card.plate, card.vehicleId);
+      } catch {
+        failedCount++;
+      }
+    }
+    toast.dismiss(pt);
+    if (failedCount > 0) {
+      toast.error(
+        failedCount === uploads.length
+          ? 'No se pudieron subir las fotos. El registro quedó guardado.'
+          : `${failedCount} foto(s) no se subieron correctamente.`,
+      );
+    }
   };
 
   const doSave = async (data: InspectionFormData) => {
@@ -666,30 +758,7 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
       }
 
       const inspectionId: string = body.data?.inspectionId;
-      if (inspectionId) {
-        const uploads = Object.entries(photoFiles).filter(([, f]) => f !== null);
-        if (uploads.length > 0) {
-          const pt = toast.loading(`Subiendo ${uploads.length} foto(s)…`);
-          let failedCount = 0;
-          for (const [type, file] of uploads) {
-            try {
-              await photoApi.upload(inspectionId, file as File, type, card.plate, card.vehicleId);
-            } catch {
-              failedCount++;
-            }
-          }
-          toast.dismiss(pt);
-          if (failedCount > 0) {
-            toast.error(
-              failedCount === uploads.length
-                ? 'No se pudieron subir las fotos. La inspección quedó guardada.'
-                : `${failedCount} foto(s) no se subieron correctamente.`,
-            );
-          }
-        }
-      }
-
-      if (loadFromId) localStorage.removeItem(DRAFT_KEY);
+      if (inspectionId) await uploadPhotos(inspectionId);
 
       toast.success(
         body.uiState === 'open_issue_created'
@@ -704,6 +773,35 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
     }
   };
 
+  // Guarda un borrador y vuelve al panel. Sin validación bloqueante: persiste el
+  // estado actual aunque esté incompleto. Usado por el botón "Guardar borrador"
+  // y por la auto-persistencia al salir del formulario con datos capturados.
+  const saveDraftAndExit = async () => {
+    setSaving(true);
+    try {
+      const res = await inspectionApi.saveDraft(buildData('draft'));
+      const inspectionId: string = res.data.data?.inspectionId;
+      if (inspectionId) await uploadPhotos(inspectionId);
+      toast.success('Borrador guardado.');
+      onSaved();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      toast.error(msg ?? 'Error al guardar el borrador.');
+      setSaving(false);
+    }
+  };
+
+  const hasCapturedData = () =>
+    !!driver || kmVal > 0 || !!obs.trim() || hasDamageOrMissing || hasAnyPhoto;
+
+  // Salir del formulario: si hay datos capturados (y no es edición sellada de
+  // supervisor) se auto-persiste un borrador para no perder el avance.
+  const handleBack = () => {
+    if (saving) return;
+    if (!isSealed && !editById && hasCapturedData()) { saveDraftAndExit(); return; }
+    onBack();
+  };
+
   const handleSave = () => {
     if (hasDamageOrMissing && !hasAnyPhoto) {
       toast.error('Se requiere al menos una foto cuando hay daños o herramientas faltantes.');
@@ -711,7 +809,7 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
       return;
     }
     if (isSealed && canModify) { setShowModifyModal(true); return; }
-    doSave(buildData());
+    doSave(buildData('final'));
   };
 
   const handleKmConfirm = async (justification: string) => {
@@ -763,6 +861,14 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
       case 7: return <BlockDamage picks={intDmg} setPicks={setIntDmg} />;
       case 8: return <Block9 obs={obs} setObs={setObs} />;
       case 9: return <Block10 files={photoFiles} setFiles={setPhotoFiles} />;
+      case 10: return (
+        <BlockPreview
+          driverName={driver === 'otro' ? otherDriver : (drivers.find(d => d.id === driver)?.name ?? '')}
+          km={km} prevKm={prevKm} fuel={fuel} clean={clean}
+          tools={tools} extDmg={extDmg} intDmg={intDmg} obs={obs} photoFiles={photoFiles}
+          isDraftFlow={!isSealed && !editById}
+        />
+      );
       default: return null;
     }
   };
@@ -850,7 +956,7 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
         {/* ── Header ── */}
         <header className="flex-shrink-0 border-b border-border bg-card">
           <div className="flex items-center gap-4 px-6 py-4">
-            <Button variant="outline" size="sm" className="h-10 shrink-0" onClick={onBack}>
+            <Button variant="outline" size="sm" className="h-10 shrink-0" onClick={handleBack} disabled={saving}>
               <ChevronLeft className="h-4 w-4" />
               Panel
             </Button>
@@ -963,20 +1069,46 @@ export function InspectionForm({ card, loadFromId, editById, isSealed, canModify
             </div>
           </div>
 
+          {/* Guardia: "Guardar borrador" es secundario en pasos intermedios.
+              En el último paso pasa a ser la acción principal (abajo). */}
+          {!readOnly && !isSealed && !editById && !isLastStep && (
+            <Button
+              size="touch" variant="outline"
+              className="shrink-0 text-base"
+              onClick={saveDraftAndExit}
+              disabled={saving}
+            >
+              Guardar borrador
+            </Button>
+          )}
+
           {readOnly ? (
             <Button size="touch" variant="outline" className="shrink-0 text-base opacity-60" disabled>
               Solo lectura
             </Button>
           ) : isLastStep ? (
-            <Button size="touch" className="shrink-0 text-base" onClick={handleSave} disabled={saving}>
-              {saving ? (
-                <><Loader2 className="h-5 w-5 animate-spin" /> Guardando…</>
-              ) : isSealed ? (
-                '✓ Guardar modificación'
-              ) : (
-                '✓ Guardar revisión'
-              )}
-            </Button>
+            (isSealed || editById) ? (
+              // Edición de supervisor (sellada o por id): persiste de inmediato.
+              <Button size="touch" className="shrink-0 text-base" onClick={handleSave} disabled={saving}>
+                {saving ? (
+                  <><Loader2 className="h-5 w-5 animate-spin" /> Guardando…</>
+                ) : isSealed ? (
+                  '✓ Guardar modificación'
+                ) : (
+                  '✓ Guardar'
+                )}
+              </Button>
+            ) : (
+              // Guardia: NO se finaliza desde el formulario. Solo se guarda el
+              // borrador; el envío del reporte se hace con "Enviar" en el panel.
+              <Button size="touch" className="shrink-0 text-base" onClick={saveDraftAndExit} disabled={saving}>
+                {saving ? (
+                  <><Loader2 className="h-5 w-5 animate-spin" /> Guardando…</>
+                ) : (
+                  'Guardar borrador'
+                )}
+              </Button>
+            )
           ) : (
             <Button
               size="touch"

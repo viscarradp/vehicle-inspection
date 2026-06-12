@@ -99,6 +99,7 @@ export function inspectionRow(overrides: Partial<Inspection> = {}): Inspection {
     guardName:               'Guard One',
     returnStatus:            'received',
     status:                  'reviewed_ok',
+    lifecycleStatus:         'final',
     mileage:                 51000,
     previousMileage:         50000,
     mileageDifference:       1000,

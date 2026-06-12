@@ -6,6 +6,7 @@ import {
   getInspectionById,
   getInspectionForShift,
   getInspectionsByDate,
+  deleteDraft,
 } from '../db/inspections';
 import {
   getActiveVehicles,
@@ -53,6 +54,9 @@ async function shiftContext(branchId: number): Promise<{
 const inspectionSchema = z.object({
   vehicleId:                 z.string().min(1),
   plate:                     z.string(),
+  // 'draft' = guardar borrador (sin validación bloqueante ni efectos colaterales);
+  // 'final' (default) = registrar definitivamente con la ruta completa.
+  intent:                    z.enum(['draft', 'final']).optional(),
   returnStatus:              z.enum(['received', 'not_returned', 'never_left', 'other']),
   authorizedBy:              z.string().optional(),
   expectedReturnDate:        z.string().optional(),
@@ -164,11 +168,19 @@ export async function getGuardDashboard(req: Request, res: Response, next: NextF
     // Secuencial (no Promise.all): ambas corren sobre la única conexión fijada
     // del request, que no puede multiplexar queries concurrentes.
     const vehicles         = await getActiveVehicles(scope);
-    const todayInspections = await getInspectionsByDate(localDate, scope);  // sin turno: cualquier insp de hoy
-    const inspByVehicle = new Map(todayInspections.map(i => [i.vehicleId, i]));
+    // 'all' incluye borradores para poder mostrarlos en la tarjeta; abajo se
+    // separan finales (todayRecord/seen) de borradores (draft) por vehículo.
+    const todayInspections = await getInspectionsByDate(localDate, scope, undefined, 'all');
+    const finalByVehicle = new Map(
+      todayInspections.filter(i => i.lifecycleStatus === 'final').map(i => [i.vehicleId, i]),
+    );
+    const draftByVehicle = new Map(
+      todayInspections.filter(i => i.lifecycleStatus === 'draft').map(i => [i.vehicleId, i]),
+    );
 
     const cards: VehicleDashboardCard[] = vehicles.map(v => {
-      const insp = inspByVehicle.get(v.id);
+      const insp  = finalByVehicle.get(v.id);
+      const draft = draftByVehicle.get(v.id);
       let daysSinceLastReview: number | undefined;
       let noReviewAlert = false;
       if (v.lastInspectionDate) {
@@ -198,6 +210,7 @@ export async function getGuardDashboard(req: Request, res: Response, next: NextF
               inspectionStatus:  insp.returnStatus === 'received' ? insp.status : undefined,
             }
           : { kind: 'none' },
+        draft: draft ? { inspectionId: draft.id, updatedAt: draft.updatedAt } : undefined,
         lastInspectionDate:  v.lastInspectionDate,
         daysSinceLastReview,
         noReviewAlert,
@@ -236,7 +249,8 @@ export async function createOrUpdateInspection(req: Request, res: Response, next
       });
       return;
     }
-    const data = parsed.data;
+    const data   = parsed.data;
+    const intent = data.intent ?? 'final';
 
     const branchId = req.user!.branchId;
     if (!branchId) {
@@ -263,10 +277,13 @@ export async function createOrUpdateInspection(req: Request, res: Response, next
       return;
     }
 
-    const validationError = validateReceived(data);
-    if (validationError) {
-      res.status(400).json({ success: false, ...validationError, uiState: 'validation_error' });
-      return;
+    // Los borradores no validan campos obligatorios — están incompletos por diseño.
+    if (intent !== 'draft') {
+      const validationError = validateReceived(data);
+      if (validationError) {
+        res.status(400).json({ success: false, ...validationError, uiState: 'validation_error' });
+        return;
+      }
     }
 
     const { localDate, shift, instant } = await shiftContext(branchId);
@@ -276,6 +293,35 @@ export async function createOrUpdateInspection(req: Request, res: Response, next
     // Baseline de kilometraje: si ya hay registro de este turno se mantiene su
     // baseline; si es nuevo, se usa el último km conocido del vehículo.
     const previousMileage = existing ? (existing.previousMileage ?? 0) : vehicle.lastMileage;
+
+    // ─── Guardar borrador ────────────────────────────────────────────────────
+    // Persiste el estado actual sin validación bloqueante, sin alerta antifraude
+    // de km, sin crear issues, sin tocar el kilometraje del vehículo ni su estado.
+    // Reutiliza el upsert por bucket: un borrador y su eventual final son la
+    // misma fila (UX_Inspections_Bucket), por lo que finalizar es un flip in-place.
+    if (intent === 'draft') {
+      const { fields } = buildFields(data, previousMileage);
+      let draftId: string;
+      if (existing) {
+        await updateInspection(existing.id, { ...fields, mileageWarningType: 'none', lifecycleStatus: 'draft' });
+        draftId = existing.id;
+      } else {
+        const created = await createInspection({
+          branchId, vehicleId: data.vehicleId, plate: data.plate,
+          localDate, shift, direction: 'entry',
+          guardId: req.user!.userId, guardName: req.user!.fullName,
+          ...fields, mileageWarningType: 'none', lifecycleStatus: 'draft',
+          createdBy: req.user!.userId, now,
+        });
+        draftId = created.id;
+      }
+      res.json({
+        success: true, statusCode: 'INSPECTION_DRAFT_SAVED',
+        message: 'Borrador guardado.', uiState: 'saved_successfully',
+        data: { inspectionId: draftId, lifecycleStatus: 'draft' },
+      });
+      return;
+    }
 
     // Filtro antifraude de kilometraje (solo recibidos). El cliente reenvía con
     // mileageWarningConfirmed=true tras confirmar — no se persiste hasta entonces.
@@ -301,15 +347,20 @@ export async function createOrUpdateInspection(req: Request, res: Response, next
     let inspectionId: string;
     let isFirstIssueDetection: boolean;
     if (existing) {
-      await updateInspection(existing.id, { ...fields, mileageWarningType });
+      await updateInspection(existing.id, { ...fields, mileageWarningType, lifecycleStatus: 'final' });
       inspectionId          = existing.id;
-      isFirstIssueDetection = hasNewIssue && !existing.hasNewIssue;
+      // Si veníamos de un borrador, este es el primer registro real: el borrador
+      // nunca creó un issue, así que no usamos el delta !existing.hasNewIssue
+      // (que lo suprimiría) — tratamos la finalización como primera detección.
+      const wasDraft        = existing.lifecycleStatus === 'draft';
+      isFirstIssueDetection = hasNewIssue && (wasDraft || !existing.hasNewIssue);
     } else {
       const created = await createInspection({
         branchId, vehicleId: data.vehicleId, plate: data.plate,
         localDate, shift, direction: 'entry',
         guardId: req.user!.userId, guardName: req.user!.fullName,
-        ...fields, mileageWarningType, createdBy: req.user!.userId, now,
+        ...fields, mileageWarningType, lifecycleStatus: 'final',
+        createdBy: req.user!.userId, now,
       });
       inspectionId          = created.id;
       isFirstIssueDetection = hasNewIssue;
@@ -471,6 +522,37 @@ async function logSealEdit(req: Request, existing: Inspection, newValue: unknown
     reason,
     branchId: existing.branchId,
   });
+}
+
+// ─── Descartar un borrador ─────────────────────────────────────────────────────
+//
+// Solo borra registros en estado 'draft'. Un registro finalizado nunca se borra
+// por esta vía (responde 409). El scope se valida vía getInspectionById, de modo
+// que un borrador de otra sucursal devuelve 404 (mismo patrón anti-IDOR).
+
+export async function discardDraft(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const existing = await getInspectionById(req.params.id, resolveScope(req.user!));
+    if (!existing) {
+      res.status(404).json({ success: false, statusCode: 'NOT_FOUND', message: 'Inspección no encontrada.', uiState: 'not_found' });
+      return;
+    }
+    if (existing.lifecycleStatus !== 'draft') {
+      res.status(409).json({
+        success: false, statusCode: 'NOT_A_DRAFT',
+        message: 'Solo se pueden descartar borradores. Este registro ya fue finalizado.',
+        uiState: 'validation_error',
+      });
+      return;
+    }
+    await deleteDraft(existing.id);
+    res.json({
+      success: true, statusCode: 'DRAFT_DISCARDED', message: 'Borrador descartado.',
+      uiState: 'saved_successfully', data: { inspectionId: existing.id },
+    });
+  } catch (err) {
+    next(err);
+  }
 }
 
 export async function getInspection(req: Request, res: Response, next: NextFunction): Promise<void> {

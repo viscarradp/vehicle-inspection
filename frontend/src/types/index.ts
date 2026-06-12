@@ -24,6 +24,9 @@ export type ReturnStatus =
   | 'never_left'
   | 'other';
 
+/** Ciclo de vida del evento (v2.2): borrador en captura o registrado. */
+export type LifecycleStatus = 'draft' | 'final';
+
 /**
  * Estado persistente del vehículo. 'active' es el estado base (hardcoded).
  * Los demás estados viven en VehicleStatusTypes y son configurables por admin_pais+.
@@ -63,6 +66,11 @@ export interface VehicleDashboardCard {
     inspectionId?: string;
     inspectionStatus?: InspectionStatus; // solo cuando kind === 'received'
   };
+  /** Borrador de inspección pendiente en el turno actual, si existe. */
+  draft?: {
+    inspectionId: string;
+    updatedAt: string;
+  };
   lastInspectionDate?: string;
   daysSinceLastReview?: number;
   noReviewAlert: boolean;
@@ -95,6 +103,8 @@ export type ToolsStatus = 'ok' | 'missing' | 'damaged' | 'not_applicable';
 export interface InspectionFormData {
   /** Presente solo al editar una inspección existente (supervisor / turno actual). */
   inspectionId?: string;
+  /** 'draft' = guardar borrador (sin validación/efectos); 'final' (default) = finalizar. */
+  intent?: LifecycleStatus;
   vehicleId: string;
   plate: string;
   returnStatus: ReturnStatus;

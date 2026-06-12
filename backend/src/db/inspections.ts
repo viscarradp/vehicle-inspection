@@ -2,7 +2,7 @@ import sql from 'mssql';
 import { getConn } from './connection';
 import { applyScopeWhere } from './scopeUtils';
 import type {
-  Inspection, ReturnStatus, InspectionStatus, Shift, InspectionDirection,
+  Inspection, ReturnStatus, InspectionStatus, LifecycleStatus, Shift, InspectionDirection,
   FuelLevel, CleanlinessStatus, GeneralStatus, ToolsStatus, MileageWarningType,
   TenantScope,
 } from '../types';
@@ -31,6 +31,7 @@ function toInspection(r: Record<string, unknown>): Inspection {
     finalDriverNameManual:     (r.FinalDriverNameManual       as string | null)      ?? undefined,
     returnStatus:              r.ReturnStatus                 as ReturnStatus,
     status:                    r.InspectionStatus             as InspectionStatus,
+    lifecycleStatus:           (r.LifecycleStatus             as LifecycleStatus) ?? 'final',
     authorizedBy:              (r.AuthorizedBy                as string | null)      ?? undefined,
     expectedReturnDate:        r.ExpectedReturnDate != null ? isoDate(r.ExpectedReturnDate) : undefined,
     mileage:                   (r.Mileage                     as number | null)      ?? undefined,
@@ -99,6 +100,7 @@ export async function createInspection(data: {
   interiorGeneralStatus:     GeneralStatus | null;
   generalObservation:        string;
   hasNewIssue:               boolean;
+  lifecycleStatus:           LifecycleStatus;
   createdBy:                 string;
   now:                       string;
 }): Promise<{ id: string }> {
@@ -130,6 +132,7 @@ export async function createInspection(data: {
   req.input('interiorGeneralStatus',     sql.NVarChar(20),   data.interiorGeneralStatus);
   req.input('generalObservation',        sql.NVarChar(1000), data.generalObservation);
   req.input('hasNewIssue',               sql.Bit,            data.hasNewIssue ? 1 : 0);
+  req.input('lifecycleStatus',           sql.NVarChar(10),   data.lifecycleStatus);
   const createdById = parseInt(data.createdBy, 10);
   req.input('createdById',               sql.Int,            Number.isNaN(createdById) ? null : createdById);
   req.input('now',                       sql.NVarChar(50),   data.now);
@@ -145,6 +148,7 @@ export async function createInspection(data: {
         FuelLevel, CleanlinessStatus, ToolsGeneralStatus,
         ExteriorGeneralStatus, InteriorGeneralStatus,
         GeneralObservation, HasNewIssue, HasPhotos, ModifiedAfterSeal,
+        LifecycleStatus,
         CreatedById, CreatedAt, UpdatedAt
       )
       OUTPUT INSERTED.Id
@@ -157,6 +161,7 @@ export async function createInspection(data: {
         @fuelLevel, @cleanlinessStatus, @toolsGeneralStatus,
         @exteriorGeneralStatus, @interiorGeneralStatus,
         @generalObservation, @hasNewIssue, 0, 0,
+        @lifecycleStatus,
         @createdById, @now, @now
       )
     `);
@@ -189,6 +194,7 @@ export async function createInspection(data: {
           interiorGeneralStatus:     data.interiorGeneralStatus,
           generalObservation:        data.generalObservation,
           hasNewIssue:               data.hasNewIssue,
+          lifecycleStatus:           data.lifecycleStatus,
         });
         return { id: existing.id };
       }
@@ -248,16 +254,24 @@ export async function getInspectionForShift(
 /**
  * Inspections for a local date (and optional shift) within the caller's scope.
  * Single flexible query that powers the shift report, daily report and export.
+ *
+ * `lifecycle` controla qué filas se incluyen. DEFAULT 'final' excluye borradores
+ * → reportes, export y conteos visto/no-visto quedan intactos. El dashboard del
+ * guardia llama con 'all' para poder mostrar los borradores pendientes.
  */
 export async function getInspectionsByDate(
   localDate: string,
   scope:     TenantScope,
   shift?:    Shift,
+  lifecycle: 'final' | 'all' = 'final',
 ): Promise<Inspection[]> {
   const req = getConn();
   req.input('localDate', sql.Date, localDate);
   const scopeClause = applyScopeWhere(req, scope, 'i.BranchId');
   let where = `i.LocalDate = @localDate AND ${scopeClause}`;
+  if (lifecycle === 'final') {
+    where += " AND i.LifecycleStatus = 'final'";
+  }
   if (shift) {
     req.input('shift', sql.NVarChar(20), shift);
     where += ' AND i.Shift = @shift';
@@ -306,6 +320,7 @@ export async function updateInspection(id: string, data: {
   generalObservation?:        string;
   hasNewIssue?:               boolean;
   hasPhotos?:                 boolean;
+  lifecycleStatus?:           LifecycleStatus;
   modifiedAfterSeal?:         boolean;
   modifiedBy?:                string;
   modifiedReason?:            string;
@@ -335,11 +350,34 @@ export async function updateInspection(id: string, data: {
   if (data.generalObservation        !== undefined) { req.input('generalObservation',        sql.NVarChar(1000), data.generalObservation);                               set.push('GeneralObservation = @generalObservation'); }
   if (data.hasNewIssue               !== undefined) { req.input('hasNewIssue',               sql.Bit,            data.hasNewIssue ? 1 : 0);                             set.push('HasNewIssue = @hasNewIssue'); }
   if (data.hasPhotos                 !== undefined) { req.input('hasPhotos',                 sql.Bit,            data.hasPhotos ? 1 : 0);                               set.push('HasPhotos = @hasPhotos'); }
+  if (data.lifecycleStatus           !== undefined) { req.input('lifecycleStatus',           sql.NVarChar(10),   data.lifecycleStatus);                                  set.push('LifecycleStatus = @lifecycleStatus'); }
   if (data.modifiedAfterSeal         !== undefined) { req.input('modifiedAfterSeal',         sql.Bit,            data.modifiedAfterSeal ? 1 : 0);                       set.push('ModifiedAfterSeal = @modifiedAfterSeal'); }
   if (data.modifiedBy                !== undefined) { const mId = parseInt(data.modifiedBy, 10); req.input('modifiedById', sql.Int, Number.isNaN(mId) ? null : mId);              set.push('ModifiedById = @modifiedById'); }
   if (data.modifiedReason            !== undefined) { req.input('modifiedReason',            sql.NVarChar(500),  data.modifiedReason);                                   set.push('ModifiedReason = @modifiedReason'); }
 
   await req.query(`UPDATE Inspections SET ${set.join(', ')} WHERE Id = @id`);
+}
+
+/**
+ * Borra un borrador (LifecycleStatus='draft') y sus fotos asociadas.
+ * Defensa en profundidad: el WHERE exige 'draft', de modo que jamás puede
+ * eliminar un registro finalizado aunque el caller se equivoque de id.
+ * La verificación de scope la hace el controller vía getInspectionById.
+ * Devuelve true si efectivamente borró una fila borrador.
+ */
+export async function deleteDraft(id: string): Promise<boolean> {
+  const inspectionId = parseInt(id, 10);
+  // Las fotos tienen FK a Inspections(Id) sin cascade → borrarlas primero.
+  const photoReq = getConn();
+  photoReq.input('id', sql.Int, inspectionId);
+  await photoReq.query(`DELETE FROM Photos WHERE InspectionId = @id`);
+
+  const req = getConn();
+  req.input('id', sql.Int, inspectionId);
+  const result = await req.query(`
+    DELETE FROM Inspections WHERE Id = @id AND LifecycleStatus = 'draft'
+  `);
+  return result.rowsAffected[0] > 0;
 }
 
 export async function markHasPhotos(inspectionId: string): Promise<void> {
@@ -367,7 +405,8 @@ export async function getUnseenVehicles(
            last.LastAt
     FROM Vehicles v
     OUTER APPLY (
-      SELECT MAX(i.CreatedAt) AS LastAt FROM Inspections i WHERE i.VehicleId = v.Id
+      SELECT MAX(i.CreatedAt) AS LastAt FROM Inspections i
+      WHERE i.VehicleId = v.Id AND i.LifecycleStatus = 'final'
     ) last
     WHERE v.Active = 1 AND v.CurrentStatus = 'active' AND ${scopeClause}
       AND (last.LastAt IS NULL OR last.LastAt < DATEADD(hour, -@hours, SYSUTCDATETIME()))
@@ -377,6 +416,7 @@ export async function getUnseenVehicles(
         WHERE i2.VehicleId = v.Id
           AND CAST(i2.CreatedAt AS DATE) = CAST(SYSUTCDATETIME() AS DATE)
           AND i2.ReturnStatus = 'never_left'
+          AND i2.LifecycleStatus = 'final'
       )
     ORDER BY v.Plate
   `);

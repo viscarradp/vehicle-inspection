@@ -60,16 +60,19 @@ IF EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'Security')
 GO
 
 -- 3) Verificación -------------------------------------------------------------
-PRINT 'login vi_app:        ' + CASE WHEN (SELECT COUNT(*) FROM sys.server_principals  WHERE name='vi_app') > 0 THEN 'OK' ELSE 'FALTA' END;
-PRINT 'usuario vi_app:      ' + CASE WHEN (SELECT COUNT(*) FROM sys.database_principals WHERE name='vi_app') > 0 THEN 'OK' ELSE 'FALTA' END;
-PRINT 'db_datareader:       ' + CASE WHEN IS_ROLEMEMBER('db_datareader','vi_app')=1 THEN 'OK' ELSE 'FALTA' END;
-PRINT 'db_datawriter:       ' + CASE WHEN IS_ROLEMEMBER('db_datawriter','vi_app')=1 THEN 'OK' ELSE 'FALTA' END;
-PRINT 'NO es db_owner:      ' + CASE WHEN IS_ROLEMEMBER('db_owner','vi_app')=1 THEN 'ADVERTENCIA: es db_owner' ELSE 'OK' END;
-PRINT 'VIEW DEF Security:   ' + CASE
-    WHEN (SELECT COUNT(*) FROM sys.schemas WHERE name='Security') = 0
-        THEN 'PENDIENTE (crea el esquema con Operaciones.sql y vuelve a ejecutar)'
-    WHEN (
-        SELECT COUNT(*)
+-- SQL Server NO permite subconsultas dentro de la expresión escalar de PRINT
+-- (error 1046 "Subqueries are not allowed in this context"). Se resuelven primero
+-- en variables con SELECT @var = ... y luego PRINT solo usa escalares.
+DECLARE @loginOk        BIT,
+        @userOk         BIT,
+        @securityExists BIT,
+        @viewDefOk      BIT;
+
+SELECT @loginOk        = CASE WHEN EXISTS (SELECT 1 FROM sys.server_principals  WHERE name = 'vi_app') THEN 1 ELSE 0 END;
+SELECT @userOk         = CASE WHEN EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'vi_app') THEN 1 ELSE 0 END;
+SELECT @securityExists = CASE WHEN EXISTS (SELECT 1 FROM sys.schemas            WHERE name = 'Security') THEN 1 ELSE 0 END;
+SELECT @viewDefOk      = CASE WHEN EXISTS (
+        SELECT 1
         FROM   sys.database_permissions p
         JOIN   sys.database_principals  u ON p.grantee_principal_id = u.principal_id
         WHERE  u.name = 'vi_app'
@@ -77,5 +80,15 @@ PRINT 'VIEW DEF Security:   ' + CASE
         AND    p.class_desc = 'SCHEMA'
         AND    p.major_id = SCHEMA_ID('Security')
         AND    p.state_desc = 'GRANT'
-    ) > 0 THEN 'OK' ELSE 'FALTA (re-ejecuta Operaciones.sql)' END;
+    ) THEN 1 ELSE 0 END;
+
+PRINT 'login vi_app:        ' + CASE WHEN @loginOk = 1 THEN 'OK' ELSE 'FALTA' END;
+PRINT 'usuario vi_app:      ' + CASE WHEN @userOk  = 1 THEN 'OK' ELSE 'FALTA' END;
+PRINT 'db_datareader:       ' + CASE WHEN IS_ROLEMEMBER('db_datareader','vi_app')=1 THEN 'OK' ELSE 'FALTA' END;
+PRINT 'db_datawriter:       ' + CASE WHEN IS_ROLEMEMBER('db_datawriter','vi_app')=1 THEN 'OK' ELSE 'FALTA' END;
+PRINT 'NO es db_owner:      ' + CASE WHEN IS_ROLEMEMBER('db_owner','vi_app')=1 THEN 'ADVERTENCIA: es db_owner' ELSE 'OK' END;
+PRINT 'VIEW DEF Security:   ' + CASE
+    WHEN @securityExists = 0 THEN 'PENDIENTE (crea el esquema con Operaciones.sql y vuelve a ejecutar)'
+    WHEN @viewDefOk      = 1 THEN 'OK'
+    ELSE 'FALTA (re-ejecuta Operaciones.sql)' END;
 GO

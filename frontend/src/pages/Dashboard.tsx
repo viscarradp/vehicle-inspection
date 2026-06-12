@@ -9,11 +9,12 @@ import { AusenteModal, type AusenteData } from '../components/AusenteModal';
 import { NoSalioModal } from '../components/NoSalioModal';
 import { useVehicleStatusTypes } from '@/hooks/useVehicleStatusTypes';
 import { InspectionForm } from '../components/InspectionForm';
+import { InspectionSummaryModal, type InspectionSummary } from '../components/InspectionSummaryModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { VehicleDashboardCard, GuardDashboard } from '../types';
-import { inspectionApi, vehicleApi } from '../api/endpoints';
+import { VehicleDashboardCard, GuardDashboard, InspectionFormData, Driver } from '../types';
+import { inspectionApi, vehicleApi, driverApi } from '../api/endpoints';
 
 type FilterKey = 'todos' | 'sin_revisar' | 'fuera' | 'revisado';
 
@@ -59,6 +60,10 @@ export function Dashboard() {
   const [filter, setFilter]           = useState<FilterKey>('todos');
   const [search, setSearch]           = useState('');
   const [justRevisado, setJustRevisado] = useState<string | null>(null);
+  const [drivers, setDrivers]         = useState<Driver[]>([]);
+  // Modal de resumen: 'send' (confirmar envío de borrador) o 'view' (ver reporte enviado, solo lectura).
+  const [summaryModal, setSummaryModal] = useState<{ card: VehicleDashboardCard; insp: Record<string, unknown>; mode: 'send' | 'view' } | null>(null);
+  const [enviarSending, setEnviarSending] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -78,6 +83,11 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => { loadDashboard(); }, [loadDashboard]);
+
+  // Conductores para resolver el nombre de "quién entrega" en el resumen de envío.
+  useEffect(() => {
+    driverApi.list().then(r => setDrivers(r.data.data as Driver[])).catch(() => {});
+  }, []);
 
   const vehicles = dashboard?.vehicles ?? [];
   const counts   = dashboard?.counts ?? { total: 0, seen: 0, unseen: 0 };
@@ -131,6 +141,123 @@ export function Dashboard() {
     }
   };
 
+  // Enviar (paso 1): relee la fila borrador y abre el modal de resumen para que
+  // el guardia confirme la información antes de finalizar.
+  const handleEnviarBorrador = async (card: VehicleDashboardCard) => {
+    if (!card.draft) return;
+    try {
+      const got = await inspectionApi.get(card.draft.inspectionId);
+      setSummaryModal({ card, insp: got.data.data as Record<string, unknown>, mode: 'send' });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      toast.error(msg ?? 'No se pudo cargar el borrador.');
+    }
+  };
+
+  // Ver reporte enviado: abre el mismo modal de resumen en modo solo lectura.
+  const handleVerReporte = async (card: VehicleDashboardCard) => {
+    const id = card.todayRecord.inspectionId;
+    if (!id) return;
+    try {
+      const got = await inspectionApi.get(id);
+      setSummaryModal({ card, insp: got.data.data as Record<string, unknown>, mode: 'view' });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      toast.error(msg ?? 'No se pudo cargar el reporte.');
+    }
+  };
+
+  // Enviar (paso 2): confirmado en el modal. Reenvía el borrador con intent:'final',
+  // reutilizando toda la validación/creación de issue/refresh de kilometraje del
+  // backend (el upsert por bucket encuentra el borrador y lo promueve in-place).
+  // Si el borrador está incompleto, el backend responde con el error puntual.
+  const confirmEnviar = async () => {
+    if (!summaryModal) return;
+    const { card, insp } = summaryModal;
+    setEnviarSending(true);
+    try {
+      const body: InspectionFormData = {
+        vehicleId:                 card.vehicleId,
+        plate:                     card.plate,
+        returnStatus:              (insp.returnStatus as InspectionFormData['returnStatus']) ?? 'received',
+        finalDriverId:             (insp.finalDriverId as string | undefined) || undefined,
+        finalDriverNameManual:     (insp.finalDriverNameManual as string | undefined) || undefined,
+        mileage:                   (insp.mileage as number | undefined) ?? undefined,
+        fuelLevel:                 insp.fuelLevel as InspectionFormData['fuelLevel'],
+        cleanlinessStatus:         insp.cleanlinessStatus as InspectionFormData['cleanlinessStatus'],
+        toolsGeneralStatus:        insp.toolsGeneralStatus as InspectionFormData['toolsGeneralStatus'],
+        exteriorGeneralStatus:     insp.exteriorGeneralStatus as InspectionFormData['exteriorGeneralStatus'],
+        interiorGeneralStatus:     insp.interiorGeneralStatus as InspectionFormData['interiorGeneralStatus'],
+        generalObservation:        (insp.generalObservation as string | undefined) || undefined,
+        mileageWarningConfirmed:   !!insp.mileageWarningConfirmed,
+        mileageWarningObservation: (insp.mileageWarningObservation as string | undefined) || undefined,
+        intent:                    'final',
+      };
+      const res = await inspectionApi.save(body);
+      if (res.data.uiState === 'mileage_warning') {
+        toast.error('El kilometraje necesita confirmación. Abre "Editar" para revisarlo.');
+        setEnviarSending(false);
+        setSummaryModal(null);
+        return;
+      }
+      setSummaryModal(null);
+      markFlash(card.plate);
+      loadDashboard();
+      toast.success(
+        res.data.uiState === 'open_issue_created'
+          ? `${card.plate} — enviado. Daño registrado para seguimiento.`
+          : `${card.plate} — reporte enviado.`,
+      );
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      toast.error(msg ?? 'No se pudo enviar. Completa el borrador con "Editar".');
+      setSummaryModal(null);
+    } finally {
+      setEnviarSending(false);
+    }
+  };
+
+  // Arma el resumen tipado para el modal desde la card + la inspección borrador.
+  const toSummary = (card: VehicleDashboardCard, insp: Record<string, unknown>): InspectionSummary => {
+    const driverName = insp.finalDriverNameManual
+      ? String(insp.finalDriverNameManual)
+      : insp.finalDriverId != null
+        ? (drivers.find(d => d.id === String(insp.finalDriverId))?.name ?? `Conductor #${insp.finalDriverId}`)
+        : undefined;
+    return {
+      plate:                 card.plate,
+      vehicleType:           card.vehicleType,
+      brand:                 card.brand,
+      model:                 card.model,
+      localDate:             insp.localDate as string | undefined,
+      shift:                 insp.shift as string | undefined,
+      mileage:               insp.mileage as number | undefined,
+      previousMileage:       insp.previousMileage as number | undefined,
+      mileageDifference:     insp.mileageDifference as number | undefined,
+      guardName:             insp.guardName as string | undefined,
+      driverName,
+      exteriorGeneralStatus: insp.exteriorGeneralStatus as string | undefined,
+      interiorGeneralStatus: insp.interiorGeneralStatus as string | undefined,
+      toolsGeneralStatus:    insp.toolsGeneralStatus as string | undefined,
+      fuelLevel:             insp.fuelLevel as string | undefined,
+      cleanlinessStatus:     insp.cleanlinessStatus as string | undefined,
+      generalObservation:    insp.generalObservation as string | undefined,
+    };
+  };
+
+  const handleDescartarBorrador = async (card: VehicleDashboardCard) => {
+    if (!card.draft) return;
+    if (!window.confirm(`¿Descartar el borrador de ${card.plate}? Esta acción no se puede deshacer.`)) return;
+    try {
+      await inspectionApi.discard(card.draft.inspectionId);
+      toast.success(`Borrador de ${card.plate} descartado.`);
+      loadDashboard();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message;
+      toast.error(msg ?? 'No se pudo descartar el borrador.');
+    }
+  };
+
   const handleNoSalio = async (note?: string) => {
     if (!noSalioCard) return;
     const plate = noSalioCard.plate;
@@ -161,6 +288,7 @@ export function Dashboard() {
     return (
       <InspectionForm
         card={selectedCard}
+        loadFromId={selectedCard.draft?.inspectionId}
         initialPrevKm={selectedCard.lastMileage}
         onSaved={handleSaved}
         onBack={() => setSelectedCard(null)}
@@ -257,6 +385,9 @@ export function Dashboard() {
                     onInspeccionar={() => setSelectedCard(card)}
                     onEstadoEspecial={() => setAusenteCard(card)}
                     onNoSalio={() => setNoSalioCard(card)}
+                    onEnviarBorrador={() => handleEnviarBorrador(card)}
+                    onDescartarBorrador={() => handleDescartarBorrador(card)}
+                    onVerReporte={() => handleVerReporte(card)}
                   />
                 ))}
               </div>
@@ -305,6 +436,17 @@ export function Dashboard() {
           plate={noSalioCard.plate}
           onClose={() => setNoSalioCard(null)}
           onConfirm={handleNoSalio}
+        />
+      )}
+
+      {/* ── Modal resumen: envío de borrador ('send') o ver reporte enviado ('view') ── */}
+      {summaryModal && (
+        <InspectionSummaryModal
+          summary={toSummary(summaryModal.card, summaryModal.insp)}
+          sending={enviarSending}
+          readOnly={summaryModal.mode === 'view'}
+          onConfirm={confirmEnviar}
+          onClose={() => { if (!enviarSending) setSummaryModal(null); }}
         />
       )}
     </div>
