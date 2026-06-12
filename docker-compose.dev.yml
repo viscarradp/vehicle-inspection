@@ -1,28 +1,75 @@
-# docker-compose.dev.yml — Entorno de DESARROLLO containerizado (hot-reload)
+# docker-compose.dev.yml — Entorno de DESARROLLO autocontenido (app + base de datos)
 #
 # USO:
 #   docker compose -f docker-compose.dev.yml up
 #   Frontend (UI):  http://localhost:5173
 #   Backend (API):  http://localhost:3001
-#   Detener:        Ctrl-C   |   limpiar deps: docker compose -f docker-compose.dev.yml down -v
+#   SQL Server:     localhost:1433  (usuario sa, ver MSSQL_SA_PASSWORD abajo)
+#   Detener:        Ctrl-C
+#   Reset total:    docker compose -f docker-compose.dev.yml down -v   (borra la DB)
 #
-# DIFERENCIAS CLAVE vs. docker-compose.yml (que es prod-like):
-#   - NODE_ENV=development → la cookie de login NO lleva `Secure` (funciona sobre
-#     HTTP), CORS permite el origen de Vite, y el SPA lo sirve Vite con hot-reload
-#     (no Node). El self-test de RLS sólo ADVIERTE (no aborta), así que puedes usar
-#     tu DB local con `sa` sin crear el usuario vi_app.
-#   - El código fuente se monta como volumen → cambios en backend/ y frontend/ se
-#     recargan en caliente, sin reconstruir imagen.
+# QUÉ LEVANTA (todo en contenedor — no necesitas SQL Server instalado):
+#   db        → SQL Server (azure-sql-edge, imagen multi-arch: nativa en Apple
+#               Silicon y en Intel/Windows).
+#   db-init   → corre UNA vez: aplica database/Operaciones.sql + create-app-user.sql
+#               (bootstrap) y luego el seed de desarrollo. Sale al terminar.
+#   backend   → Node con hot-reload, conectado como el usuario NO privilegiado
+#               vi_app (ejerce la RLS igual que producción).
+#   frontend  → Vite con hot-reload, proxya /api → backend.
 #
-# BASE DE DATOS:
-#   Por defecto se conecta al SQL Server de tu host vía host.docker.internal.
-#   Asegúrate de que tu SQL Server local tenga TCP/IP habilitado en el puerto 1433.
-#   (Para tests herméticos con RLS real se añadirá un servicio `db` + seed — ver
-#   el harness de pruebas automatizadas.)
+# DESARROLLO NATIVO (sin Docker): ver README.md → "Opción 1 (Nativo)".
 
 name: vehicle-inspection-dev
 
 services:
+  # ── Base de datos (SQL Server vía azure-sql-edge, multi-arch) ────────────────
+  db:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: vi_db_dev
+    environment:
+      ACCEPT_EULA: "Y"
+      # Contraseña de `sa` SOLO para desarrollo local. No usar en producción.
+      MSSQL_SA_PASSWORD: "Dev_Str0ngP@ss!"
+    ports:
+      - "1433:1433"
+    volumes:
+      - vi_db_dev:/var/opt/mssql
+    healthcheck:
+      # azure-sql-edge no trae sqlcmd; basta comprobar que el puerto TDS responde.
+      # La readiness real (login aceptado) la maneja el reintento de bootstrap.ts.
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/1433' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+      start_period: 30s
+
+  # ── Bootstrap + seed (one-shot) ──────────────────────────────────────────────
+  db-init:
+    image: node:20-alpine
+    container_name: vi_db_init
+    working_dir: /app/backend
+    command: sh -c "npm install --no-audit --no-fund && npm run db:bootstrap && npm run db:seed"
+    environment:
+      # Conexión usada por bootstrap.ts (sa) y por seed.ts (sa → RLS se omite).
+      MSSQL_HOST: db
+      MSSQL_PORT: "1433"
+      MSSQL_SA_PASSWORD: "Dev_Str0ngP@ss!"
+      MSSQL_DATABASE: Operaciones
+      MSSQL_USER: sa
+      MSSQL_PASSWORD: "Dev_Str0ngP@ss!"
+      MSSQL_ENCRYPT: "false"
+      MSSQL_TRUST_CERT: "true"
+      SQL_DIR: /app/database         # bootstrap.ts lee los .sql desde aquí
+    volumes:
+      - ./backend:/app/backend
+      - ./database:/app/database:ro  # scripts SQL del repo (solo lectura)
+      - backend_node_modules:/app/backend/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # ── Backend (hot-reload, conecta como vi_app) ────────────────────────────────
   backend:
     image: node:20-alpine
     container_name: vi_backend_dev
@@ -31,29 +78,35 @@ services:
     env_file: backend/.env
     environment:
       NODE_ENV: development
-      # Alcanza el SQL Server del host (sobreescribe el localhost del .env, que
-      # dentro del contenedor apuntaría al propio contenedor).
-      MSSQL_HOST: host.docker.internal
-      # File-watch fiable sobre bind mounts (Docker Desktop / Windows).
+      # Sobreescriben el .env para apuntar al contenedor `db` con el usuario vi_app
+      # que crea create-app-user.sql (misma contraseña hardcodeada en ese script).
+      MSSQL_HOST: db
+      MSSQL_PORT: "1433"
+      MSSQL_DATABASE: Operaciones
+      MSSQL_USER: vi_app
+      MSSQL_PASSWORD: "UnaClaveFuerte123!"
+      MSSQL_ENCRYPT: "false"
+      MSSQL_TRUST_CERT: "true"
+      # File-watch fiable sobre bind mounts (Docker Desktop / Windows / macOS).
       CHOKIDAR_USEPOLLING: "true"
     ports:
       - "3001:3001"
     volumes:
-      - ./backend:/app/backend                              # código (hot-reload)
-      - backend_node_modules:/app/backend/node_modules      # deps aisladas del host (binarios nativos: sharp)
-      - vi_uploads_dev:/app/backend/uploads                 # fotos subidas
-    extra_hosts:
-      # Necesario en Linux/CI; en Docker Desktop host.docker.internal ya existe.
-      - "host.docker.internal:host-gateway"
+      - ./backend:/app/backend                          # código (hot-reload)
+      - backend_node_modules:/app/backend/node_modules  # deps aisladas del host
+      - vi_uploads_dev:/app/backend/uploads             # fotos subidas
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
 
+  # ── Frontend (Vite, hot-reload) ──────────────────────────────────────────────
   frontend:
     image: node:20-alpine
     container_name: vi_frontend_dev
     working_dir: /app/frontend
     command: sh -c "npm install && npm run dev"
     environment:
-      # Vite proxya /api → el contenedor backend (no localhost, que sería el
-      # propio contenedor del frontend).
+      # Vite proxya /api → el contenedor backend.
       VITE_PROXY_TARGET: http://backend:3001
       CHOKIDAR_USEPOLLING: "true"
     ports:
@@ -65,6 +118,7 @@ services:
       - backend
 
 volumes:
+  vi_db_dev:
   backend_node_modules:
   frontend_node_modules:
   vi_uploads_dev:

@@ -542,7 +542,7 @@ IF NOT EXISTS (SELECT 1 FROM Branches WHERE Code = 'GT-CENTRAL')
 
 IF NOT EXISTS (SELECT 1 FROM Branches WHERE Code = 'SV-CENTRAL')
     INSERT INTO Branches (CountryId, Code, Name)
-    SELECT Id, 'SV-CENTRAL', 'El Salvador - Sede Central' FROM Countries WHERE Code = 'SV';
+    SELECT Id, 'SV-CENTRAL', 'El Salvador - Zaragoza' FROM Countries WHERE Code = 'SV';
 
 IF NOT EXISTS (SELECT 1 FROM Branches WHERE Code = 'NI-CENTRAL')
     INSERT INTO Branches (CountryId, Code, Name)

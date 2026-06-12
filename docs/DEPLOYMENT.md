@@ -1,8 +1,11 @@
 # Guía de Despliegue — Vehicle Inspection App
 
-**Versión**: 1.0  
-**Stack**: Node.js 20 · SQLite · Docker · nginx  
+**Versión**: 1.1  
+**Stack**: Node.js 20 · SQL Server (externo) · Docker · nginx  
 **Tiempo estimado de despliegue**: 30-60 minutos  
+
+> La base de datos es **SQL Server** y vive **fuera** del contenedor (instancia
+> gestionada o servidor propio). La app se conecta a ella vía `backend/.env`.
 
 ---
 
@@ -58,11 +61,11 @@ cd /opt/vi
 ## 3. Configurar variables de entorno
 
 ```bash
-# Copiar la plantilla
-cp .env.production.example .env
+# Copiar la plantilla del backend
+cp backend/.env.example backend/.env
 
 # Editar con tus valores reales
-nano .env
+nano backend/.env
 ```
 
 ### Variables OBLIGATORIAS que debes cambiar:
@@ -72,6 +75,10 @@ nano .env
 | `JWT_SECRET` | Secreto aleatorio ≥ 64 caracteres. Ver comando abajo. |
 | `ALLOWED_ORIGIN` | URL exacta de tu dominio, ej: `https://inspeccion.miempresa.com` |
 | `PUBLIC_BASE_URL` | Igual que ALLOWED_ORIGIN |
+| `MSSQL_HOST` / `MSSQL_PORT` | Host y puerto del SQL Server externo |
+| `MSSQL_DATABASE` | Normalmente `Operaciones` |
+| `MSSQL_USER` / `MSSQL_PASSWORD` | Usuario **no privilegiado** `vi_app` (lo crea `database/create-app-user.sql`) |
+| `MSSQL_ENCRYPT` / `MSSQL_TRUST_CERT` | `true`/`false` según tu SQL Server (Azure SQL → `encrypt=true`) |
 
 **Generar JWT_SECRET seguro:**
 ```bash
@@ -117,6 +124,31 @@ server_name inspeccion.miempresa.com;
 
 ---
 
+## 4-bis. Preparar la base de datos (SQL Server — una sola vez)
+
+La app **no** crea el esquema en producción; se aplica una vez sobre el SQL Server
+externo, como un login administrador (p. ej. `sa`):
+
+```bash
+# 1) Esquema, catálogos y políticas RLS
+sqlcmd -S <host> -U sa -P '<pass>' -i database/Operaciones.sql
+
+# 2) Login/usuario NO privilegiado vi_app (el que usará la app)
+#    Ajusta la contraseña dentro del script antes de correrlo.
+sqlcmd -S <host> -U sa -P '<pass>' -i database/create-app-user.sql
+```
+
+Luego siembra el superadmin (idempotente; sobreescribe la contraseña del `admin`):
+
+```bash
+cd backend && ADMIN_PASSWORD='<pass-admin-fuerte>' npm run seed:prod
+```
+
+> RLS exige que la app **no** conecte como `db_owner`/`sysadmin`. El arranque lo
+> verifica y aborta en producción si detecta un login privilegiado. Usa `vi_app`.
+
+---
+
 ## 5. Levantar los servicios
 
 ```bash
@@ -146,8 +178,8 @@ Desde el navegador: abrir `https://inspeccion.miempresa.com`
 
 ## 6. Primer inicio de sesión
 
-El sistema incluye la base de datos inicial con los usuarios registrados.  
-Ingresar con las credenciales configuradas durante la fase de desarrollo.
+Ingresar como `admin` con la contraseña que definiste en `ADMIN_PASSWORD` al correr
+`npm run seed:prod` (paso 4-bis).
 
 > **Nota de seguridad**: Cambiar los PINs de todos los usuarios en el primer ingreso  
 > desde el panel de Gestión (⚙) → pestaña Usuarios.
@@ -178,14 +210,17 @@ docker logs vi_nginx --tail 100 -f
 
 ### Backup de la base de datos
 
-```bash
-# Crear backup con timestamp
-docker exec vi_app sh -c \
-  "sqlite3 /app/data/vehicle_inspection.db '.backup /app/data/backup_\$(date +%Y%m%d_%H%M%S).db'"
+La base de datos es **SQL Server externo**, así que el respaldo se hace en el
+propio servidor de base de datos (no en el contenedor de la app):
 
-# Copiar backup al host
-docker cp vi_app:/app/data/ ./backups/
+```bash
+# Backup completo a un archivo .bak (en el host del SQL Server)
+sqlcmd -S <host> -U sa -P '<pass>' -Q \
+  "BACKUP DATABASE Operaciones TO DISK='/var/opt/mssql/backup/Operaciones_$(date +%Y%m%d_%H%M%S).bak' WITH INIT, COMPRESSION"
 ```
+
+> Si usas una instancia gestionada (Azure SQL), aprovecha sus backups automáticos /
+> point-in-time restore en lugar de `BACKUP DATABASE`.
 
 ### Backup de fotos
 
@@ -229,7 +264,8 @@ echo "0 3 1,15 * * certbot renew --quiet && \
 | `CORS error` en navegador | `ALLOWED_ORIGIN` mal configurado | Actualizar `.env` y reiniciar |
 | Login no funciona | `JWT_SECRET` vacío o corto | Verificar `.env`, mínimo 32 chars |
 | Fotos no se suben | Directorio sin permisos | `docker exec vi_app chown appuser /app/uploads` |
-| Base de datos bloqueada | Múltiples instancias | Verificar que solo corra un contenedor `vi_app` |
+| App aborta al arrancar | Conecta como login privilegiado o RLS off | Usar `vi_app` (no `sa`); correr `create-app-user.sql` |
+| No conecta a la DB | `MSSQL_*` mal o firewall | `docker logs vi_app`; verificar host/puerto/credenciales del SQL Server |
 
 ---
 
@@ -244,8 +280,9 @@ Internet
    ├── /api/*  ─── proxy ──────────── [Node.js :3001]
    └── /* ─────── proxy ──────────── [Node.js :3001] → SPA index.html
                                             │
-                                      [SQLite WAL]
-                                      /app/data/
+                                            ▼
+                                   [SQL Server externo]
+                                   (instancia gestionada o servidor propio)
 ```
 
 ---
