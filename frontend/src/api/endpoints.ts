@@ -89,6 +89,9 @@ export const reportApi = {
   daily:       (date: string, shift?: string) => api.get('/reports/daily', { params: { date, shift } }),
   exportDaily: (date: string, shift?: string) =>
     api.get('/reports/export/daily', { params: { date, shift }, responseType: 'blob' }),
+  // PDF: modo rango ({from,to}) o últimos N ({last}). Devuelve un Blob.
+  exportPdf: (params: { from: string; to: string } | { last: number }) =>
+    api.get('/reports/export/pdf', { params, responseType: 'blob' }),
   noReview:    (days = 3)     => api.get('/reports/no-review', { params: { days } }),
   vehicle:     (vehicleId: string) => api.get(`/reports/vehicle/${vehicleId}`),
   openIssues:  () => api.get('/reports/open-issues'),

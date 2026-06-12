@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, Download, Pencil, X, ImageOff, ChevronRight } from 'lucide-react';
+import { Loader2, Download, Pencil, X, ImageOff, ChevronRight, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { useAuth }        from '@/context/AuthContext';
@@ -326,6 +326,109 @@ function InspectionDetail({
   );
 }
 
+// ─── Control de descarga PDF (rango de fechas / últimos N) ───────────────────────
+
+function PdfExportControl({ defaultDate }: { defaultDate: string }) {
+  const [open, setOpen]   = useState(false);
+  const [mode, setMode]   = useState<'range' | 'last'>('range');
+  const [from, setFrom]   = useState(defaultDate);
+  const [to, setTo]       = useState(defaultDate);
+  const [last, setLast]   = useState(10);
+  const [busy, setBusy]   = useState(false);
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      const params = mode === 'last' ? { last } : { from, to };
+      const res = await reportApi.exportPdf(params);
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = mode === 'last' ? `inspecciones_ultimas_${last}.pdf` : `inspecciones_${from}_a_${to}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setOpen(false);
+    } catch {
+      // El error viene como Blob (responseType blob); mensaje genérico.
+      toast.error('No se pudo generar el PDF. Revisa los filtros.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted"
+      >
+        <FileText className="h-4 w-4" /> PDF
+      </button>
+
+      {open && (
+        <>
+          {/* click-away */}
+          <button
+            className="fixed inset-0 z-40 cursor-default"
+            aria-hidden
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 z-50 mt-2 w-72 rounded-xl border border-border bg-card p-4 shadow-xl">
+            <p className="mb-3 text-sm font-semibold">Descargar PDF</p>
+
+            {/* Selector de modo */}
+            <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg border border-border p-1">
+              {([['range', 'Rango'], ['last', 'Últimos N']] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setMode(v)}
+                  className={cn(
+                    'rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                    mode === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {mode === 'range' ? (
+              <div className="space-y-2">
+                <label className="block">
+                  <span className="text-xs text-muted-foreground">Desde</span>
+                  <input type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} className="input-box mt-0.5 w-full" />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-muted-foreground">Hasta</span>
+                  <input type="date" value={to} min={from} onChange={e => setTo(e.target.value)} className="input-box mt-0.5 w-full" />
+                </label>
+              </div>
+            ) : (
+              <label className="block">
+                <span className="text-xs text-muted-foreground">Cantidad de reportes más recientes</span>
+                <input
+                  type="number" min={1} max={100} value={last}
+                  onChange={e => setLast(Math.min(100, Math.max(1, parseInt(e.target.value || '1', 10))))}
+                  className="input-box mt-0.5 w-full"
+                />
+              </label>
+            )}
+
+            <button
+              disabled={busy}
+              onClick={download}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Descargar PDF
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Página ─────────────────────────────────────────────────────────────────────
 
 export function ReportsPage() {
@@ -428,14 +531,17 @@ export function ReportsPage() {
         title="Reportes por turno"
         subtitle="Stream de inspecciones por fecha y turno"
         action={
-          <button
-            disabled={exporting || inspections.length === 0}
-            onClick={handleExport}
-            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-40"
-          >
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            Exportar .xlsx
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={exporting || inspections.length === 0}
+              onClick={handleExport}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-40"
+            >
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Exportar .xlsx
+            </button>
+            <PdfExportControl defaultDate={date} />
+          </div>
         }
       />
 

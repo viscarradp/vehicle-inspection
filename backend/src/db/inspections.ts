@@ -284,6 +284,50 @@ export async function getInspectionsByDate(
   return result.recordset.map(toInspection);
 }
 
+/**
+ * Inspecciones finalizadas dentro de un rango de fechas operativas [from, to]
+ * (inclusivo), en el scope del solicitante. Alimenta la descarga de PDF por rango.
+ * Excluye borradores.
+ */
+export async function getInspectionsByDateRange(
+  from:  string,
+  to:    string,
+  scope: TenantScope,
+): Promise<Inspection[]> {
+  const req = getConn();
+  req.input('from', sql.Date, from);
+  req.input('to',   sql.Date, to);
+  const scopeClause = applyScopeWhere(req, scope, 'i.BranchId');
+  const result = await req.query(`
+    SELECT i.* FROM Inspections i
+    WHERE i.LocalDate BETWEEN @from AND @to
+      AND i.LifecycleStatus = 'final'
+      AND ${scopeClause}
+    ORDER BY i.LocalDate DESC, i.Shift, i.Id
+  `);
+  return result.recordset.map(toInspection);
+}
+
+/**
+ * Las `limit` inspecciones finalizadas más recientes en el scope (por CreatedAt).
+ * Alimenta la descarga de PDF de "últimos N". Excluye borradores.
+ */
+export async function getRecentInspections(
+  scope: TenantScope,
+  limit: number,
+): Promise<Inspection[]> {
+  const req = getConn();
+  req.input('limit', sql.Int, limit);
+  const scopeClause = applyScopeWhere(req, scope, 'i.BranchId');
+  const result = await req.query(`
+    SELECT TOP (@limit) i.* FROM Inspections i
+    WHERE i.LifecycleStatus = 'final'
+      AND ${scopeClause}
+    ORDER BY i.CreatedAt DESC
+  `);
+  return result.recordset.map(toInspection);
+}
+
 export async function getInspectionsByVehicle(
   vehicleId: string,
   scope:     TenantScope,

@@ -18,7 +18,8 @@ COPY backend/package*.json ./
 RUN npm ci
 
 COPY backend/ ./
-# Bundle everything into dist/server.js — mssql and sharp stay external (native)
+# Bundle everything into dist/server.js. mssql y sharp quedan external (nativos);
+# pdfkit también, para que sus métricas de fuente (.afm) viajen en node_modules.
 RUN npx esbuild src/index.ts \
       --bundle \
       --platform=node \
@@ -26,7 +27,8 @@ RUN npx esbuild src/index.ts \
       --format=cjs \
       --outfile=dist/server.js \
       --external:mssql \
-      --external:sharp
+      --external:sharp \
+      --external:pdfkit
 
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:20-alpine AS runtime

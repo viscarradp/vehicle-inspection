@@ -25,4 +25,10 @@ export interface PhotoStorage {
   put(storagePath: string, data: Buffer): Promise<string>;
   /** Entrega el objeto identificado por `storagePath` a la respuesta HTTP. */
   serve(storagePath: string, res: Response): Promise<void>;
+  /**
+   * Devuelve los bytes crudos del objeto. Lo usa la generación de PDF para
+   * embeber las fotos directamente (sin pasar por una URL → sin problemas de
+   * auth/CORS). Lanza si el objeto no existe.
+   */
+  read(storagePath: string): Promise<Buffer>;
 }

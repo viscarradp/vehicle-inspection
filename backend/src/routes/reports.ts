@@ -3,12 +3,17 @@ import { requireAuth } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { requireValidBranchContext } from '../middleware/requireValidBranchContext';
 import { scopeFromRequest } from '../middleware/tenantScope';
-import { getInspectionsByDate, getInspectionsByVehicle } from '../db/inspections';
+import {
+  getInspectionsByDate, getInspectionsByVehicle,
+  getInspectionsByDateRange, getRecentInspections,
+} from '../db/inspections';
 import { getIssues } from '../db/issues';
-import { getActiveVehicles } from '../db/vehicles';
+import { getActiveVehicles, getVehicleById } from '../db/vehicles';
 import { generateDailyExcel } from '../services/exportService';
+import { generateInspectionsPdf } from '../services/pdfService';
 import { parseDateParam, parsePositiveIntParam } from '../utils/queryParams';
-import type { Inspection, Shift } from '../types';
+import { AppError } from '../middleware/errorHandler';
+import type { Inspection, Vehicle, Shift } from '../types';
 
 const router = Router();
 router.use(requireAuth, requireRole('jefe_operaciones', 'admin', 'admin_pais', 'admin_global'), requireValidBranchContext);
@@ -76,6 +81,70 @@ router.get('/export/daily', async (req, res, next) => {
     const buffer = await generateDailyExcel(date, scopeFromRequest(req), shift);
     res.setHeader('Content-Disposition', `attachment; filename="reporte_${date}.xlsx"`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (err) { next(err); }
+});
+
+// Descarga de reportes en PDF. Dos modos de filtro (excluyentes):
+//   ?last=N            → las N inspecciones más recientes (1..100)
+//   ?from=&to=         → inspecciones en el rango de fechas (máx. 92 días)
+// Autorización: heredada del router (requireAuth + requireRole admins/jefe_operaciones).
+const MAX_PDF_INSPECTIONS = 150;   // techo para acotar el tamaño del documento
+const MAX_RANGE_DAYS      = 92;
+
+router.get('/export/pdf', async (req, res, next) => {
+  try {
+    const scope = scopeFromRequest(req);
+
+    let inspections: Inspection[];
+    let subtitle: string;
+    let filename: string;
+
+    if (req.query.last !== undefined) {
+      // ── Modo "últimos N" ──
+      const n = parsePositiveIntParam(req.query.last, 10, 100);
+      inspections = await getRecentInspections(scope, n);
+      subtitle = `Últimas ${inspections.length} inspecciones`;
+      filename = `inspecciones_ultimas_${n}.pdf`;
+    } else {
+      // ── Modo rango de fechas ──
+      const today = new Date().toISOString().split('T')[0];
+      const from  = parseDateParam(req.query.from, today);
+      const to    = parseDateParam(req.query.to, today);
+      if (from > to) {
+        throw new AppError(400, 'INVALID_RANGE', "La fecha 'desde' no puede ser posterior a 'hasta'.");
+      }
+      const spanDays = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+      if (spanDays > MAX_RANGE_DAYS) {
+        throw new AppError(400, 'RANGE_TOO_WIDE', `El rango no puede exceder ${MAX_RANGE_DAYS} días.`);
+      }
+      inspections = await getInspectionsByDateRange(from, to, scope);
+      subtitle = `Del ${from} al ${to}`;
+      filename = `inspecciones_${from}_a_${to}.pdf`;
+    }
+
+    // Techo de seguridad: evita PDFs gigantes. Se informa en el subtítulo.
+    let truncated = false;
+    if (inspections.length > MAX_PDF_INSPECTIONS) {
+      inspections = inspections.slice(0, MAX_PDF_INSPECTIONS);
+      truncated = true;
+    }
+
+    // Enriquecer con datos del vehículo (marca/modelo/tipo). Secuencial: la
+    // conexión fijada del request no multiplexa queries concurrentes.
+    const vehicleById = new Map<string, Vehicle>();
+    for (const id of new Set(inspections.map(i => i.vehicleId))) {
+      const v = await getVehicleById(id);
+      if (v) vehicleById.set(id, v);
+    }
+
+    const buffer = await generateInspectionsPdf(inspections, vehicleById, {
+      title: 'Reporte de inspecciones',
+      subtitle: truncated ? `${subtitle} (mostrando las primeras ${MAX_PDF_INSPECTIONS})` : subtitle,
+    });
+
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/pdf');
     res.send(buffer);
   } catch (err) { next(err); }
 });

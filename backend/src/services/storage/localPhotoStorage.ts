@@ -39,4 +39,11 @@ export class LocalPhotoStorage implements PhotoStorage {
       if (err) res.status(404).json({ success: false, message: 'Foto no encontrada.' });
     });
   }
+
+  async read(storagePath: string): Promise<Buffer> {
+    if (!isSafeRelativePath(storagePath)) {
+      throw new Error(`Ruta de foto inválida: ${storagePath}`);
+    }
+    return fs.promises.readFile(path.join(UPLOADS_DIR, storagePath));
+  }
 }

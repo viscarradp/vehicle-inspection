@@ -41,4 +41,10 @@ export class GcsPhotoStorage implements PhotoStorage {
     // _res.redirect(url);
     throw new Error('GcsPhotoStorage.serve no implementado todavía.');
   }
+
+  async read(_storagePath: string): Promise<Buffer> {
+    // const [buf] = await this.bucket.file(_storagePath).download();
+    // return buf;
+    throw new Error('GcsPhotoStorage.read no implementado todavía.');
+  }
 }
