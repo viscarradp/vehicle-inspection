@@ -123,6 +123,7 @@ export async function updateVehicle(id: string, data: {
   model?:       string;
   year?:        number | null;
   notes?:       string;
+  initialMileage?: number;
   chassisNumber?: string | null;
   vin?:           string | null;
   engineNumber?:  string | null;
@@ -141,6 +142,7 @@ export async function updateVehicle(id: string, data: {
   if (data.vin           !== undefined) { req.input('vin',           sql.NVarChar(17), data.vin);           set.push('Vin = @vin'); }
   if (data.engineNumber  !== undefined) { req.input('engineNumber',  sql.NVarChar(50), data.engineNumber);  set.push('EngineNumber = @engineNumber'); }
   if (data.notes       !== undefined) { req.input('notes',       sql.NVarChar(500), data.notes);               set.push('Notes = @notes'); }
+  if (data.initialMileage !== undefined) { req.input('initialMileage', sql.Int, data.initialMileage); set.push('InitialMileage = @initialMileage'); }
 
   await req.query(`UPDATE Vehicles SET ${set.join(', ')} WHERE Id = @id`);
 }

@@ -49,11 +49,13 @@ export function createApp() {
 
   // ── CORS — restrict to declared origin in production ────────────
   const allowedOrigin = process.env.ALLOWED_ORIGIN ?? (isProd ? '' : 'http://localhost:5173');
+  // Matches http(s)://192.168.<anything> for local-network access
+  const localNetworkOrigin = /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/;
   app.use(cors({
     origin: isProd
       ? (origin, cb) => {
-          // Allow same-origin requests (no Origin header) and the declared domain
-          if (!origin || origin === allowedOrigin) return cb(null, true);
+          if (!origin) return cb(null, true);
+          if (origin === allowedOrigin || localNetworkOrigin.test(origin)) return cb(null, true);
           cb(new Error(`CORS: origin ${origin} not allowed`));
         }
       : allowedOrigin,

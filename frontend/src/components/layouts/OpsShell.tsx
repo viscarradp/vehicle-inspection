@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Tag,
   Settings2,
+  Activity,
 } from 'lucide-react';
 import { BrandLogo } from '@/components/BrandLogo';
 
@@ -17,6 +18,7 @@ import { useAuth }                    from '@/context/AuthContext';
 import { OpsCenter }                   from '@/pages/ops/OpsCenter';
 import { IssuesPage }                  from '@/pages/ops/IssuesPage';
 import { ReportsPage }                 from '@/pages/ops/ReportsPage';
+import { FleetMonitorPage }            from '@/pages/ops/FleetMonitorPage';
 import { FleetPage }                   from '@/pages/ops/FleetPage';
 import { DriversPage }                 from '@/pages/ops/DriversPage';
 import { UsersPage }                   from '@/pages/ops/UsersPage';
@@ -53,9 +55,10 @@ export function OpsShell() {
 
   // Nav items visibles según rol
   const navItems: NavItem[] = [
-    { to: '/ops',         label: 'Centro de Operaciones', icon: LayoutDashboard, end: true },
-    { to: '/ops/issues',  label: 'Daños abiertos',        icon: AlertTriangle },
-    { to: '/ops/reports', label: 'Reportes',              icon: ClipboardList },
+    { to: '/ops',               label: 'Centro de Operaciones', icon: LayoutDashboard, end: true },
+    { to: '/ops/issues',        label: 'Daños abiertos',        icon: AlertTriangle },
+    { to: '/ops/reports',       label: 'Reportes',              icon: ClipboardList },
+    { to: '/ops/fleet-monitor', label: 'Estado de flota',       icon: Activity },
     ...(canManageFleet        ? [{ to: '/ops/fleet',         label: 'Flota',             icon: Car  }] : []),
     ...(canManageFleet        ? [{ to: '/ops/drivers',       label: 'Conductores',       icon: IdCard }] : []),
     ...(canManageUsers        ? [{ to: '/ops/users',         label: 'Usuarios',          icon: Users }] : []),
@@ -142,6 +145,7 @@ export function OpsShell() {
           <Route index                    element={<OpsCenter />} />
           <Route path="issues"            element={<IssuesPage />} />
           <Route path="reports"           element={<ReportsPage />} />
+          <Route path="fleet-monitor"     element={<FleetMonitorPage />} />
           <Route path="fleet"             element={<FleetPage />} />
           <Route path="drivers"           element={<DriversPage />} />
           <Route path="users"             element={<UsersPage />} />

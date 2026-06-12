@@ -170,7 +170,7 @@ function VehicleFields({
             onChange={(e) => onChange({ initialMileage: e.target.value })}
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            Solo al crear el vehículo en el sistema.
+            Base inicial del odómetro.
           </p>
         </div>
       )}
@@ -275,7 +275,7 @@ export function FleetPage() {
       vin: v.vin ?? '',
       engineNumber: v.engineNumber ?? '',
       notes: v.notes ?? '',
-      initialMileage: '',
+      initialMileage: v.initialMileage != null ? String(v.initialMileage) : '',
       branchId: v.branchId ? String(v.branchId) : '',
     });
     setAdding(false);
@@ -296,6 +296,7 @@ export function FleetPage() {
         model: editForm.model,
         year: parseInt(editForm.year, 10) || undefined,
         notes: editForm.notes.trim() || undefined,
+        initialMileage: parseInt(editForm.initialMileage, 10) || 0,
         ...buildIdentifierPayload(editForm, true),
       });
       toast.success('Vehículo actualizado.');
@@ -487,6 +488,7 @@ export function FleetPage() {
                       <h4 className="mb-3 text-sm font-semibold">Editar vehículo</h4>
                       <VehicleFields
                         form={editForm}
+                        showInitialMileage
                         onChange={(patch) =>
                           setEditForm((f) => ({ ...f, ...patch }))
                         }

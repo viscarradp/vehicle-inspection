@@ -145,7 +145,7 @@ export function Login() {
               </label>
               <Input
                 id="username"
-                placeholder="admin"
+                placeholder="usuario"
                 value={username}
                 onChange={e => { setUsername(e.target.value); setError(''); }}
                 autoCapitalize="none"

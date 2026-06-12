@@ -1,8 +1,8 @@
 # Auditoría de Seguridad y Calidad — Vehicle Inspection Backend
 
-**Fecha:** 2026-06-09  
+**Fecha:** 2026-06-09 · **Actualizado:** 2026-06-10 (hallazgos pendientes resueltos)  
 **Alcance:** Backend completo (14 módulos de rutas + controladores + servicios)  
-**Estado del suite:** 448 tests · 14 suites · 0 errores TS · todos pasando  
+**Estado del suite:** 533 tests · 17 suites · 0 errores TS · todos pasando  
 **Ramas afectadas:** `master` → `origin/main`
 
 ---
@@ -20,7 +20,9 @@
 
 ## 1. Resumen ejecutivo
 
-Se realizó una auditoría completa del backend cubriendo superficie de seguridad, casos borde y errores de usuario. Se encontraron **8 bugs en código de producción** (2 críticos IDOR, 3 errores de respuesta HTTP, 1 inyección de tipo, 1 validación faltante, 1 error de tipo preexistente en tests) y **5 riesgos pendientes** de menor severidad.
+Se realizó una auditoría completa del backend cubriendo superficie de seguridad, casos borde y errores de usuario. Se encontraron **8 bugs en código de producción** (2 críticos IDOR, 3 errores de respuesta HTTP, 1 inyección de tipo, 1 validación faltante, 1 error de tipo preexistente en tests) y **5 riesgos** de menor severidad.
+
+**Actualización 2026-06-10:** los **5 hallazgos pendientes fueron resueltos** (detalle en la sección 3). La resolución se hizo con la filosofía de la arquitectura — Express crudo, `mssql` nativo, sin ORMs ni parches — y se ordenó por impacto en integridad de DB y aislamiento multi-tenant: primero PENDIENTE-03 (la primitiva de scope), del que dependía endurecer con seguridad cualquier consulta scopeada nueva.
 
 | Categoría | Total encontrados | Corregidos | Pendientes |
 |---|---|---|---|
@@ -28,11 +30,11 @@ Se realizó una auditoría completa del backend cubriendo superficie de segurida
 | HTTP 500 en lugar de 404 | 3 | ✅ 3 | — |
 | Inyección de tipo en body | 1 | ✅ 1 | — |
 | Validación de entrada faltante | 1 | ✅ 1 | — |
-| Inconsistencia de scope | 1 | — | ⚠️ 1 |
-| RLS faltante en tabla | 1 | — | ⚠️ 1 |
-| SQL interpolation risk | 1 | — | ⚠️ 1 |
-| Bounds checking | 1 | — | ⚠️ 1 |
-| Cache de timezone obsoleta | 1 | — | ⚠️ 1 (diseño) |
+| Inconsistencia de scope | 1 | ✅ 1 | — |
+| RLS faltante en tabla | 1 | ✅ 1 (barrera de diseño) | — |
+| SQL interpolation risk | 1 | ✅ 1 | — |
+| Bounds checking | 1 | ✅ 1 | — |
+| Cache de timezone obsoleta | 1 | ✅ 1 | — |
 
 ---
 
@@ -242,92 +244,89 @@ if (!isValidIANATimezone(timezone)) {
 
 ## 3. Hallazgos pendientes de corrección
 
-Estos riesgos fueron identificados durante la auditoría pero **no corregidos aún**. Están ordenados por severidad.
+Identificados durante la auditoría. **Todos resueltos el 2026-06-10.** El orden a continuación es el de **ejecución priorizada** (por impacto en integridad de DB y aislamiento multi-tenant), no el orden original del documento. PENDIENTE-03 se atendió primero porque es la primitiva de la que dependen el resto de consultas scopeadas.
 
 ---
 
-### PENDIENTE-01 — Inconsistencia de scope: `GET /vehicles/:id/history`
+### PENDIENTE-03 — `applyScopeWhere(branchCol)` sin whitelist de columnas · **PRIORIDAD 1**
+
+**Severidad:** 🟢→🔴 Latente pero de blast radius total (toda query multi-tenant lo atraviesa)  
+**Archivo real:** `backend/src/db/scopeUtils.ts` (el AUDIT original apuntaba a `utils/scope.ts`, ubicación incorrecta)
+
+**Descripción:**  
+El tercer parámetro `branchCol` se interpolaba directamente en SQL (`` `${branchCol} = @scopeBranchId` ``). El driver `mssql` solo parametriza *valores*, nunca *identificadores* (columnas/tablas), así que `branchCol` era el único fragmento que llegaba a la query como texto crudo: la superficie de inyección de toda la capa de aislamiento. Todos los callers usaban literales, pero el contrato no estaba verificado.
+
+**✅ RESUELTO:**  
+Doble barrera en un único punto de control, sin dependencias nuevas:
+
+1. **Tiempo de compilación** — `branchCol: ScopeColumn`, un *union type* derivado de `SCOPE_COLUMNS` (`'BranchId' | 'v.BranchId' | 'i.BranchId' | 'u.BranchId'`, el set exhaustivo de los 13 callers en `db/{vehicles,issues,inspections,users,drivers}.ts`). `tsc` rechaza cualquier columna no permitida o dinámica en todo el repo.
+2. **Tiempo de ejecución** — `assertScopeColumn()` valida contra la allowlist y **falla cerrado**: lanza un `Error` plano (no `AppError`), por lo que el `errorHandler` global responde un 500 genérico sin reflejar el identificador ofensivo al cliente, y lo registra solo en el servidor. El guard corre **antes** de bindear parámetros, así que un payload malicioso nunca toca la query.
+
+**Tests:** `scopeUtils.test.ts` (18) — cláusulas por scope, allowlist por cada caller de producción, y guardia anti-inyección que verifica fail-closed para `DROP TABLE`, `OR 1=1`, `UNION SELECT`, casing alterado, etc.
+
+---
+
+### PENDIENTE-02 — Sin RLS en tabla `VehicleStatusLog` · **PRIORIDAD 2**
+
+**Severidad:** 🟡 Bajo-Medio (latente)  
+**Archivo:** `backend/src/db/vehicles.ts`
+
+**Descripción:**  
+Las lecturas de `VehicleStatusLog` no tendrían filtro de tenant si se expusieran por un endpoint.
+
+**✅ RESUELTO (barrera de diseño, sin código muerto):**  
+Verificado que la **única** sentencia sobre `VehicleStatusLog` es el `INSERT` de `setVehicleStatus`, gobernado por el `SESSION_CONTEXT`/RLS de la transacción del request; **no existe ninguna ruta de lectura ni endpoint**. Añadir un lector scopeado que nadie invoca sería deuda técnica. En su lugar se dejó una **barrera explícita** en el punto exacto del `INSERT`: cualquier lectura futura DEBE hacer `JOIN Vehicles v ON v.Id = VehicleStatusLog.VehicleId` + `applyScopeWhere(req, scope, 'v.BranchId')` (alias ya en la allowlist de PENDIENTE-03). Nunca leer esta tabla sin scope.
+
+---
+
+### PENDIENTE-01 — Inconsistencia de scope: `GET /vehicles/:id/history` · **PRIORIDAD 4**
 
 **Severidad:** 🟡 Bajo  
 **Archivo:** `backend/src/routes/vehicles.ts`
 
 **Descripción:**  
-`GET /vehicles/:id` devuelve 404 para vehículos fuera del scope del caller (BUG-01 corregido). Sin embargo, `GET /vehicles/:id/history` retorna 200 con lista vacía para el mismo vehículo fuera de scope. Un caller puede distinguir "vehículo sin historial" de "vehículo no en tu scope" por el código HTTP — inconsistencia que expone la existencia del objeto.
+`GET /vehicles/:id/history` retornaba 200 + lista vacía para un vehículo fuera de scope, mientras `GET /vehicles/:id` ya retornaba 404 — un caller podía distinguir "sin historial" de "fuera de tu scope".
 
-**Riesgo:** Bajo. No hay datos filtrados expuestos, solo la existencia del vehículo.  
-**Solución recomendada:** Verificar existencia + scope de `vehicleId` antes de consultar el historial, retornando 404 si está fuera de scope.
+**✅ RESUELTO (ya corregido en el árbol de trabajo, verificado):**  
+El handler hace `getVehicleById(id, scope)` → 404 si es `null` (fuera de scope o inexistente, indistinguible), y solo entonces consulta `getInspectionsByVehicle(id, scope)` (defensa en profundidad: la propia query filtra por `v.BranchId`). Ambos endpoints devuelven el mismo 404 para el mismo par vehículo+scope.
 
----
-
-### PENDIENTE-02 — Sin RLS en tabla `VehicleStatusLog`
-
-**Severidad:** 🟡 Bajo-Medio  
-**Archivo:** `backend/src/db/vehicles.ts` (queries sobre VehicleStatusLog)
-
-**Descripción:**  
-Los logs de cambio de estado de vehículos no tienen filtro de tenant en las queries de lectura. Si existe algún endpoint que exponga VehicleStatusLog directamente, un usuario podría ver logs de vehículos de otras sucursales.
-
-**Riesgo:** Bajo en la arquitectura actual (no hay endpoint público de VehicleStatusLog). Puede convertirse en riesgo si se añade un endpoint de auditoría de estados.  
-**Solución recomendada:** Añadir `applyScopeWhere` a cualquier query que lea `VehicleStatusLog` que pueda llegar a un endpoint HTTP.
+**Tests:** `vehicles.test.ts` — "404 when vehicle is outside caller scope (consistent with GET /:id)".
 
 ---
 
-### PENDIENTE-03 — `applyScopeWhere(branchCol)` sin whitelist de columnas
+### PENDIENTE-04 — `initialMileage` sin bounds checking · **PRIORIDAD 3**
 
-**Severidad:** 🟢 Muy bajo (riesgo latente, no activo)  
-**Archivo:** `backend/src/utils/scope.ts` (o donde esté `applyScopeWhere`)
+**Severidad:** 🟢 Muy bajo (integridad de dato)  
+**Archivo:** `backend/src/routes/admin.ts`, `backend/src/utils/vehicleFields.ts`
 
 **Descripción:**  
-El tercer parámetro `branchCol` se interpola directamente en la query SQL: `` `AND ${branchCol} = @scopeBranchId` ``. Todos los callers actuales usan strings hardcodeados (`'BranchId'`, `'v.BranchId'`), pero si en el futuro un caller pasa un valor derivado de input de usuario, sería vulnerable a SQL injection.
+`initialMileage ? parseInt(initialMileage, 10) : 0` no validaba rango ni tipo; `parseInt('100abc')` devolvía `100` en silencio y valores negativos/enormes se almacenaban.
 
-**Riesgo actual:** Ninguno (todos los callers son hardcoded).  
-**Solución recomendada:** Añadir una whitelist de columnas permitidas y lanzar error si el valor no está en la lista.
+**✅ RESUELTO:**  
+Se añadió `parseInitialMileage(raw): number | null` en `utils/vehicleFields.ts` (junto a las demás validaciones de campos de vehículo, en el estilo manual del archivo — sin introducir Zod donde no se usa). Usa `Number()` (no `parseInt`, que acepta basura con cola), exige entero en `[0, 9_999_999]` y rechaza decimales, `NaN`, `Infinity` y tipos no numéricos. El handler `POST /admin/vehicles` responde **400 `INVALID_MILEAGE`** antes de tocar la DB.
 
-```ts
-const ALLOWED_BRANCH_COLS = ['BranchId', 'v.BranchId', 'b.Id'] as const;
-if (!ALLOWED_BRANCH_COLS.includes(branchCol as any)) {
-  throw new Error(`Column '${branchCol}' not in whitelist`);
-}
-```
+**Tests:** `vehicleFields.test.ts` (unit, ~26 casos) + `admin.test.ts` (integración: forwarding válido, default 0, y 400 para negativo/fuera de rango/no-numérico/decimal/cola-basura).
 
 ---
 
-### PENDIENTE-04 — `initialMileage` sin bounds checking
+### PENDIENTE-05 — Cache de timezone de sucursales nunca se invalida · **PRIORIDAD 5**
 
-**Severidad:** 🟢 Muy bajo  
-**Archivo:** `backend/src/routes/admin.ts`
-
-**Descripción:**  
-```ts
-initialMileage: initialMileage ? parseInt(initialMileage, 10) : 0
-```
-No hay validación de rango. Un usuario podría enviar `initialMileage: -99999999` o `initialMileage: 9999999999`, que se almacenaría en DB sin error. Podría causar problemas en cálculos de diferencia de kilometraje.
-
-**Solución recomendada:** Añadir validación con Zod:
-```ts
-initialMileage: z.coerce.number().int().min(0).max(9_999_999).default(0)
-```
-
----
-
-### PENDIENTE-05 — Cache de timezone de sucursales nunca se invalida
-
-**Severidad:** 🟢 Informativo (decisión de diseño conocida)  
-**Archivo:** `backend/src/db/branches.ts`
+**Severidad:** 🟢 Informativo (antes "aceptado por diseño")  
+**Archivo:** `backend/src/db/branches.ts`, `backend/src/routes/countries.ts`
 
 **Descripción:**  
-```ts
-const tzCache = new Map<number, string>(); // never invalidated
-```
-Si se actualiza la zona horaria de un país, la cache sirve el valor anterior hasta que el servidor reinicia. Para aplicaciones de inspección con cambios de timezone extremadamente infrecuentes, el riesgo operacional es muy bajo.
+`tzCache` (branchId → IANA) servía el valor anterior hasta reiniciar el servidor si cambiaba el timezone de un país.
 
-**Estado:** Aceptado por diseño. El comentario en el código lo documenta. No requiere acción inmediata.
+**✅ RESUELTO (elevado a correcto, cableado a un disparador real):**  
+Se añadió `invalidateBranchTimezoneCache()` en `db/branches.ts` y se **cablea** en `PUT /countries/:id`: si el body trae `timezone`, se limpia la cache tras `updateCountry`. Queda correcto de inmediato dentro del proceso (las ediciones de TZ son rarísimas, limpiar toda la cache es trivial). Se documenta el límite multi-instancia (otras instancias se refrescan al reiniciar; la firma admite sustituir el cuerpo por una señal pub/sub si se escala) — sin código muerto: la función se invoca y está testeada.
+
+**Tests:** `countries.test.ts` — invalida al actualizar `timezone`; NO invalida cuando solo cambia el `name`.
 
 ---
 
 ## 4. Tests añadidos por módulo
 
-**Total: 448 tests en 14 suites**
+**Total: 533 tests en 17 suites** (448 originales + 85 añadidos al resolver los hallazgos pendientes: `scopeUtils.test.ts` 18, `vehicleFields.test.ts` ~26, `mileageService.test.ts`, y casos nuevos en `admin.test.ts` / `countries.test.ts` / `vehicles.test.ts`)
 
 ---
 
@@ -644,15 +643,18 @@ El parámetro opcional preserva ambas semánticas sin romper la compatibilidad.
 | Drivers (scope) | ✅ |
 | Audit logs (role guard, scope, filters) | ✅ |
 | Photos (magic bytes, MIME, path traversal, photoType) | ✅ |
-| `VehicleStatusLog` RLS | ⚠️ Pendiente |
-| `GET /vehicles/:id/history` scope consistency | ⚠️ Pendiente |
+| `VehicleStatusLog` RLS | ✅ (barrera de diseño; sin ruta de lectura) |
+| `GET /vehicles/:id/history` scope consistency | ✅ |
+| `applyScopeWhere` column allowlist | ✅ |
+| `initialMileage` bounds | ✅ |
+| Invalidación de cache de timezone | ✅ |
 
 ### Resultado final
 
 ```
-Test Suites: 14 passed, 14 total
-Tests:       448 passed, 448 total
+Test Suites: 17 passed, 17 total
+Tests:       533 passed, 533 total
 Snapshots:   0 total
-Time:        ~11s
+Time:        ~9s
 TypeScript:  0 errors
 ```

@@ -504,10 +504,10 @@ describe('POST /admin/users', () => {
     const cookie = supervisorCookie({ userId: '2' });
     const res = await request(app).post('/admin/users')
       .set('Cookie', cookie)
-      .send({ ...baseBody, role: 'guardia' });
+      .send({ ...baseBody, role: 'guardia', password: '1234' });
     expect(res.status).toBe(201);
     expect(res.body.statusCode).toBe('USER_CREATED');
-    expect(mockBcryptHash).toHaveBeenCalledWith('secure123', 12);
+    expect(mockBcryptHash).toHaveBeenCalledWith('1234', 12);
   });
 
   it('201 admin can create jefe_operaciones and admin in their branch', async () => {
@@ -525,7 +525,7 @@ describe('POST /admin/users', () => {
     const cookie = authCookie({ role: 'admin_pais', countryId: 1, branchId: undefined });
     const res = await request(app).post('/admin/users')
       .set('Cookie', cookie)
-      .send({ username: 'nobranchguard', fullName: 'No Branch', role: 'guardia', password: 'abc' });
+      .send({ username: 'nobranchguard', fullName: 'No Branch', role: 'guardia', password: '1234' });
     expect(res.status).toBe(400);
     expect(res.body.statusCode).toBe('MISSING_BRANCH');
   });
@@ -534,7 +534,7 @@ describe('POST /admin/users', () => {
     const cookie = authCookie({ role: 'admin_global', branchId: undefined });
     const res = await request(app).post('/admin/users')
       .set('Cookie', cookie)
-      .send({ username: 'adminpais', fullName: 'Admin Pais', role: 'admin_pais', password: 'abc' });
+      .send({ username: 'adminpais', fullName: 'Admin Pais', role: 'admin_pais', password: 'Securepassword1' });
     expect(res.status).toBe(400);
     expect(res.body.statusCode).toBe('MISSING_COUNTRY');
   });
@@ -544,7 +544,7 @@ describe('POST /admin/users', () => {
     const cookie = authCookie({ role: 'admin_global', branchId: undefined });
     const res = await request(app).post('/admin/users')
       .set('Cookie', cookie)
-      .send({ username: 'newadminpais', fullName: 'Admin País GT', role: 'admin_pais', password: 'abc', countryId: '1' });
+      .send({ username: 'newadminpais', fullName: 'Admin País GT', role: 'admin_pais', password: 'Securepassword1', countryId: '1' });
     expect(res.status).toBe(201);
   });
 
@@ -553,7 +553,7 @@ describe('POST /admin/users', () => {
     const cookie = authCookie({ role: 'admin', branchId: 1 });
     const res = await request(app).post('/admin/users')
       .set('Cookie', cookie)
-      .send({ ...baseBody, role: 'guardia' });
+      .send({ ...baseBody, role: 'guardia', password: '1234' });
     expect(res.status).toBe(500);
   });
 });
@@ -640,8 +640,8 @@ describe('PUT /admin/users/:id', () => {
     mockUpdateUser.mockResolvedValueOnce(undefined);
     await request(app).put('/admin/users/2')
       .set('Cookie', cookie)
-      .send({ password: 'newpassword123' });
-    expect(mockBcryptHash).toHaveBeenCalledWith('newpassword123', 12);
+      .send({ password: '1234' });
+    expect(mockBcryptHash).toHaveBeenCalledWith('1234', 12);
     expect(mockUpdateUser).toHaveBeenCalledWith('2',
       expect.objectContaining({ passwordHash: '$2a$12$hashedpassword' }),
     );

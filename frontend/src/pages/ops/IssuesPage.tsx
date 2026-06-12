@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Loader2, CheckCircle2, Clock } from 'lucide-react';
+import { Loader2, CheckCircle2, Clock, ExternalLink } from 'lucide-react';
 
 import { issueApi }    from '@/api/endpoints';
 import { PageHeader }  from '@/components/layouts/OpsShell';
@@ -19,6 +20,8 @@ interface Issue {
   detectedBy: string;
   detectedAt: string;
   maintenanceAction?: string;
+  closingObservation?: string;
+  closedAt?: string;
 }
 
 // ─── Mapas de presentación ────────────────────────────────────────────────────
@@ -43,6 +46,36 @@ const ISSUE_TYPE_LABEL: Record<string, string> = {
   documentation_problem:  'Problema de documentación',
   other:                  'Otro',
 };
+
+// Parsea el string compuesto que buildData() genera en InspectionForm:
+// "{comentario libre}\nExterior: x, y\nInterior: a, b\nHerramientas: c, d"
+function parseDescription(raw: string) {
+  const lines = (raw ?? '').split('\n').map(l => l.trim()).filter(Boolean);
+  let comment = '';
+  const exterior: string[] = [];
+  const interior: string[] = [];
+  const tools:    string[] = [];
+  for (const line of lines) {
+    if (line.startsWith('Exterior: '))     exterior.push(...line.slice(10).split(',').map(s => s.trim()).filter(Boolean));
+    else if (line.startsWith('Interior: ')) interior.push(...line.slice(10).split(',').map(s => s.trim()).filter(Boolean));
+    else if (line.startsWith('Herramientas: ')) tools.push(...line.slice(14).split(',').map(s => s.trim()).filter(Boolean));
+    else comment = line;
+  }
+  return { comment, exterior, interior, tools };
+}
+
+function ItemChips({ items, color }: { items: string[]; color: string }) {
+  if (!items.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map(item => (
+        <span key={item} className={cn('rounded-md border px-2 py-0.5 text-xs font-medium', color)}>
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('es-GT', {
@@ -100,19 +133,100 @@ function IssueRow({ issue, onUpdated }: { issue: Issue; onUpdated: () => void })
       issue.severity === 'high' && issue.status === 'open' ? 'border-red-200' : 'border-border',
     )}>
       {/* Cabecera de la tarjeta */}
-      <div className="flex items-start gap-4 p-5">
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <span className="font-mono text-lg font-bold">{issue.plate}</span>
-            <Chip text={ISSUE_TYPE_LABEL[issue.issueType] ?? issue.issueType} style={sev.badge} />
-            <Chip text={sev.label} style={sev.badge} />
-            <Chip text={sta.label} style={sta.badge} />
-          </div>
-          <p className="text-sm text-foreground mb-1">{issue.description}</p>
-          <p className="text-xs text-muted-foreground">
-            Detectado por <span className="font-medium">{issue.detectedBy}</span> · {formatDate(issue.detectedAt)}
-          </p>
+      <div className="p-5">
+        {/* Identificación: placa + tipo de daño + severidad + estado */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-lg font-bold">{issue.plate}</span>
+          <Chip text={ISSUE_TYPE_LABEL[issue.issueType] ?? issue.issueType} style="bg-muted text-foreground border-border" />
+          <Chip text={sev.label} style={sev.badge} />
+          <Chip text={sta.label} style={sta.badge} />
         </div>
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          Detectado por <span className="font-medium text-foreground">{issue.detectedBy}</span> · {formatDate(issue.detectedAt)}
+        </p>
+
+        {/* Desglose estructurado del reporte del guardia */}
+        {(() => {
+          const { comment, exterior, interior, tools } = parseDescription(issue.description);
+          const hasContent = comment || exterior.length || interior.length || tools.length;
+          return (
+            <div className="mt-3 space-y-2.5 rounded-lg border border-border bg-muted/40 p-3">
+              {!hasContent && (
+                <p className="text-sm text-muted-foreground italic">— Sin observación —</p>
+              )}
+              {comment && (
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Comentario del guardia
+                  </div>
+                  <p className="text-sm text-foreground">"{comment}"</p>
+                </div>
+              )}
+              {(exterior.length > 0 || interior.length > 0) && (
+                <div>
+                  <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Daños reportados
+                  </div>
+                  <div className="space-y-1.5">
+                    {exterior.length > 0 && (
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 shrink-0 text-xs text-muted-foreground">Ext.</span>
+                        <ItemChips items={exterior} color="bg-orange-50 text-orange-800 border-orange-200" />
+                      </div>
+                    )}
+                    {interior.length > 0 && (
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 shrink-0 text-xs text-muted-foreground">Int.</span>
+                        <ItemChips items={interior} color="bg-orange-50 text-orange-800 border-orange-200" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {tools.length > 0 && (
+                <div>
+                  <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Herramientas con problemas
+                  </div>
+                  <ItemChips items={tools} color="bg-amber-50 text-amber-800 border-amber-200" />
+                </div>
+              )}
+              {/* Enlace a reportes para ver fotos y todos los detalles de la inspección */}
+              <div className="border-t border-border/60 pt-2">
+                <Link
+                  to="/ops/reports"
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Ver inspección completa con fotos en Reportes
+                </Link>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Resolución: visible cuando el problema ya fue cerrado/desestimado */}
+        {(issue.status === 'resolved' || issue.status === 'dismissed') &&
+          (issue.maintenanceAction || issue.closingObservation) && (
+          <div className="mt-3 space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-emerald-800">Resolución</div>
+            {issue.maintenanceAction && (
+              <p className="text-sm text-foreground">
+                <span className="font-semibold text-emerald-900">Acción tomada: </span>
+                {issue.maintenanceAction}
+              </p>
+            )}
+            {issue.closingObservation && (
+              <p className="text-sm text-foreground">
+                <span className="font-semibold text-emerald-900">Observación de cierre: </span>
+                {issue.closingObservation}
+              </p>
+            )}
+            {issue.closedAt && (
+              <p className="text-xs text-emerald-800/80">Cerrado el {formatDate(issue.closedAt)}</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Acciones */}

@@ -27,6 +27,20 @@ export function errorHandler(
     return;
   }
 
+  // FK violation on GuardId → stale JWT (user re-created or DB reset after login)
+  if (
+    err.message?.includes('FOREIGN KEY') &&
+    (err.message.includes('GuardId') || err.message.includes('dbo.Users'))
+  ) {
+    res.status(401).json({
+      success: false,
+      statusCode: 'SESSION_INVALID',
+      message: 'Tu sesión ya no es válida. Cierra sesión y vuelve a entrar.',
+      uiState: 'unauthorized',
+    });
+    return;
+  }
+
   // Log full error server-side but never expose stack traces to clients
   console.error('[ERROR]', {
     message: err.message,

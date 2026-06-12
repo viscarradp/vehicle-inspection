@@ -14,7 +14,8 @@
     "db:seed": "tsx src/scripts/seed.ts",
     "db:clean": "tsx src/scripts/clean.ts",
     "db:reset": "npm run db:clean && npm run db:seed",
-    "seed": "npm run db:seed"
+    "seed": "npm run db:seed",
+    "seed:prod": "tsx src/scripts/seedProd.ts"
   },
   "dependencies": {
     "@types/mssql": "^12.3.0",

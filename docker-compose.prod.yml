@@ -7,7 +7,7 @@ services:
     image: vehicle-inspection:latest
     container_name: vi_app
     restart: unless-stopped
-    env_file: .env
+    env_file: backend/.env
     environment:
       NODE_ENV: production
     volumes:

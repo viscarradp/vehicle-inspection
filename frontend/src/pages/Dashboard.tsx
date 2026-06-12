@@ -161,7 +161,6 @@ export function Dashboard() {
     return (
       <InspectionForm
         card={selectedCard}
-        loadFromId={selectedCard.todayRecord.inspectionId}
         initialPrevKm={selectedCard.lastMileage}
         onSaved={handleSaved}
         onBack={() => setSelectedCard(null)}
@@ -269,7 +268,7 @@ export function Dashboard() {
             <div className="flex-1">
               <p className="mb-2 text-sm text-foreground">
                 <b className="font-mono tabular-nums">{counts.seen}</b> de{' '}
-                <b className="font-mono tabular-nums">{counts.total}</b> vehículos registrados hoy
+                <b className="font-mono tabular-nums">{counts.total}</b> registrados hoy
                 {counts.unseen > 0 && (
                   <span className="text-muted-foreground">
                     {' '}· <b className="font-mono tabular-nums">{counts.unseen}</b> sin registrar

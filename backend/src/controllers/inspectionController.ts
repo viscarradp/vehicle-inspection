@@ -145,17 +145,18 @@ function buildFields(data: InspectionInput, previousMileage: number) {
 
 export async function getGuardDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const branchId = req.user!.branchId;
+    const rawBranch = req.query.branchId ? parseInt(req.query.branchId as string, 10) : undefined;
+    const branchId  = (rawBranch && !isNaN(rawBranch)) ? rawBranch : req.user!.branchId;
     if (!branchId) {
       res.status(400).json({
         success: false, statusCode: 'NO_BRANCH',
-        message: 'El usuario no tiene sucursal asignada. Contacte al administrador.',
+        message: 'Selecciona una sucursal o asigna una a tu usuario.',
         uiState: 'validation_error',
       });
       return;
     }
 
-    const scope = resolveScope(req.user!);
+    const scope = resolveScope(req.user!, rawBranch);
     const { timezone, localDate, shift } = await shiftContext(branchId);
     const settings = await getTypedSettings(branchId);
     const noReviewDays = settings.no_review_days_threshold;

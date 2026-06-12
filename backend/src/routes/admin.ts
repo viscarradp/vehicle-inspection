@@ -67,6 +67,19 @@ function resolveBodyBranchId(
   return actorBranchId;
 }
 
+function validatePassword(password: string, role: UserRole): string | null {
+  if (role === 'guardia') {
+    if (!/^\d{4}$/.test(password)) {
+      return 'El PIN del guardia debe ser exactamente 4 dígitos numéricos.';
+    }
+  } else {
+    if (password.length < 8) return 'La contraseña debe tener al menos 8 caracteres.';
+    if (!/[A-Za-z]/.test(password)) return 'La contraseña debe contener al menos una letra.';
+    if (!/\d/.test(password)) return 'La contraseña debe contener al menos un número.';
+  }
+  return null;
+}
+
 // ─── Vehicles ─────────────────────────────────────────────────────────────────
 
 router.post('/vehicles', requireAdminLevel, async (req, res, next) => {
@@ -130,6 +143,17 @@ router.put('/vehicles/:id', requireAdminLevel, async (req, res, next) => {
     }
     await assertResourceInScope(vehicle.branchId, scopeFromRequest(req));
     const { plate, vehicleType, brand, model, year, notes } = req.body;
+
+    let initialMileage: number | undefined;
+    if (req.body.initialMileage !== undefined) {
+      const parsed = parseInitialMileage(req.body.initialMileage);
+      if (parsed === null) {
+        res.status(400).json({ success: false, statusCode: 'INVALID_MILEAGE', message: `El kilometraje inicial debe ser un entero entre 0 y ${MAX_INITIAL_MILEAGE}.`, uiState: 'validation_error' });
+        return;
+      }
+      initialMileage = parsed;
+    }
+
     const identifiers = resolveVehicleIdentifiersForUpdate(req.body);
     const idError = validateVehicleIdentifiers({
       chassisNumber: identifiers.chassisNumber ?? undefined,
@@ -147,6 +171,7 @@ router.put('/vehicles/:id', requireAdminLevel, async (req, res, next) => {
       model,
       year,
       notes,
+      ...(initialMileage !== undefined && { initialMileage }),
       ...(identifiers.chassisNumber !== undefined && { chassisNumber: identifiers.chassisNumber }),
       ...(identifiers.vin !== undefined && { vin: identifiers.vin }),
       ...(identifiers.engineNumber !== undefined && { engineNumber: identifiers.engineNumber }),
@@ -276,6 +301,12 @@ router.post('/users', async (req, res, next) => {
       return;
     }
 
+    const passwordError = validatePassword(password, role as UserRole);
+    if (passwordError) {
+      res.status(400).json({ success: false, statusCode: 'INVALID_PASSWORD', message: passwordError, uiState: 'validation_error' });
+      return;
+    }
+
     // 1. Validate role value against the known enum before anything else.
     if (!isValidRole(role)) {
       res.status(400).json({ success: false, statusCode: 'INVALID_ROLE', message: `El rol '${role}' no es válido.`, uiState: 'validation_error' });
@@ -370,7 +401,15 @@ router.put('/users/:id', async (req, res, next) => {
     if (active     !== undefined) data.active    = active;
     if (branchId   !== undefined) data.branchId  = branchId  ? parseInt(branchId,  10) : null;
     if (countryId  !== undefined) data.countryId = countryId ? parseInt(countryId, 10) : null;
-    if (password)                 data.passwordHash = await bcrypt.hash(password, 12);
+    if (password) {
+      const targetRole = (role as UserRole | undefined) ?? target.role;
+      const passwordError = validatePassword(password, targetRole);
+      if (passwordError) {
+        res.status(400).json({ success: false, statusCode: 'INVALID_PASSWORD', message: passwordError, uiState: 'validation_error' });
+        return;
+      }
+      data.passwordHash = await bcrypt.hash(password, 12);
+    }
 
     await updateUser(req.params.id, data);
     res.json({ success: true, statusCode: 'USER_UPDATED', message: 'Usuario actualizado.', uiState: 'saved_successfully' });

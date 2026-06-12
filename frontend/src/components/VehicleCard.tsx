@@ -137,10 +137,16 @@ export function VehicleCard({ card, statusTypes, justRevisado, onInspeccionar, o
             </Button>
           </>
         ) : kind === 'received' ? (
-          <Button size="touch" variant="outline" className="w-full text-base" onClick={onInspeccionar}>
-            <Check className="h-5 w-5 text-emerald-600" />
-            Registrado hoy
-          </Button>
+          <>
+            <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">
+              <Check className="h-3.5 w-3.5 shrink-0" />
+              Registrado hoy
+            </div>
+            <Button size="touch" variant="outline" className="w-full text-sm" onClick={onInspeccionar}>
+              Nueva salida
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </>
         ) : kind === 'never_left' ? (
           // Llegó después de todo, o el guardia se equivocó — sobreescribe el never_left
           <Button size="touch" className="w-full" onClick={onInspeccionar}>
@@ -150,6 +156,7 @@ export function VehicleCard({ card, statusTypes, justRevisado, onInspeccionar, o
         ) : kind === 'not_returned' || kind === 'other' ? (
           // Permite corregir el registro del día
           <Button size="touch" variant="outline" className="w-full text-base" onClick={onInspeccionar}>
+            <RotateCcw className="h-4 w-4" />
             Corregir registro
           </Button>
         ) : (

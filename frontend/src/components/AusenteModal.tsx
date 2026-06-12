@@ -65,17 +65,23 @@ export function AusenteModal({ plate, statusTypes, onClose, onConfirm }: Props) 
   const [saving, setSaving]             = useState(false);
   const [err, setErr]                   = useState('');
 
-  const selectedKey = selected?.kind === 'event' ? selected.opt.v : selected?.type.key;
-  const needsAuth   = selectedKey === 'special_authorization';
-  const isStatus    = selected?.kind === 'status';
+  const selectedKey     = selected?.kind === 'event' ? selected.opt.v : selected?.type.key;
+  const isStatus        = selected?.kind === 'status';
+  const showAuthorizedBy = selected !== null;
+  const authRequired     = selectedKey === 'not_returned';
+  const showExpectedDate = isStatus || selectedKey === 'not_returned';
 
   const handleConfirm = async () => {
     if (!selected) { setErr('Selecciona el motivo.'); return; }
+    if (authRequired && !authBy.trim()) {
+      setErr('El campo "Autorizó / Responsable" es obligatorio para este registro.');
+      return;
+    }
     setSaving(true); setErr('');
     try {
       await onConfirm(
         selected.kind === 'event'
-          ? { kind: 'event', returnStatus: selected.opt.v, authorizedBy: authBy.trim() || undefined, note: note.trim() || undefined }
+          ? { kind: 'event', returnStatus: selected.opt.v, authorizedBy: authBy.trim() || undefined, expectedReturnDate: expectedDate || undefined, note: note.trim() || undefined }
           : { kind: 'status', vehicleStatus: selected.type.key, authorizedBy: authBy.trim() || undefined, expectedReturnDate: expectedDate || undefined, note: note.trim() || undefined }
       );
     } catch {
@@ -152,16 +158,24 @@ export function AusenteModal({ plate, statusTypes, onClose, onConfirm }: Props) 
         </div>
 
         {/* ── Campos condicionales ── */}
-        {needsAuth && (
+        {(showAuthorizedBy || showExpectedDate) && (
           <div className="grid gap-4 rounded-lg border border-border bg-muted/40 p-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-muted-foreground">Persona que autorizó</label>
-              <input className="input-line" placeholder="Nombre y cargo…" value={authBy} onChange={e => setAuthBy(e.target.value)} autoFocus />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-muted-foreground">Fecha estimada de retorno</label>
-              <input type="date" className="input-box w-full" value={expectedDate} onChange={e => setExpectedDate(e.target.value)} />
-            </div>
+            {showAuthorizedBy && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-muted-foreground">
+                  Autorizó / Responsable{authRequired && <span className="text-red-500"> *</span>}
+                </label>
+                <input className="input-line" placeholder="Nombre y cargo…" value={authBy} onChange={e => setAuthBy(e.target.value)} autoFocus />
+              </div>
+            )}
+            {showExpectedDate && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-muted-foreground">
+                  {selectedKey === 'not_returned' ? '¿Cuándo se espera que regrese?' : 'Fecha estimada de retorno'}
+                </label>
+                <input type="date" className="input-box w-full" value={expectedDate} onChange={e => setExpectedDate(e.target.value)} />
+              </div>
+            )}
           </div>
         )}
 
@@ -170,7 +184,17 @@ export function AusenteModal({ plate, statusTypes, onClose, onConfirm }: Props) 
             <label className="mb-1 block text-sm font-medium text-muted-foreground">
               Observación <span className="font-normal opacity-60">(opcional)</span>
             </label>
-            <input className="input-line" placeholder="Contexto, instrucciones…" value={note} onChange={e => setNote(e.target.value)} />
+            <input
+              className="input-line"
+              placeholder={
+                selectedKey === 'not_returned' ? 'Ruta prevista, último contacto, datos relevantes…'
+                : selectedKey === 'other'      ? 'Describe el motivo con detalle…'
+                : isStatus                     ? 'Instrucciones, referencia de orden de trabajo…'
+                :                                'Contexto, instrucciones…'
+              }
+              value={note}
+              onChange={e => setNote(e.target.value)}
+            />
           </div>
         )}
 

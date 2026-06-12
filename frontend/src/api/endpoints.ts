@@ -32,7 +32,8 @@ export const driverApi = {
 // ─── Inspections ──────────────────────────────────────────────────────────────
 
 export const inspectionApi = {
-  dashboard: () => api.get('/inspections/dashboard'),
+  dashboard: (branchId?: number) =>
+    api.get('/inspections/dashboard', { params: branchId ? { branchId } : undefined }),
   // Sin inspectionId → registra/actualiza el evento del turno actual (guardia).
   // Con inspectionId → edita esa inspección por id (supervisor; PATCH).
   save: (data: InspectionFormData) =>

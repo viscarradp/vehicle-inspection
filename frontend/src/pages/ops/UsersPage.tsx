@@ -157,9 +157,16 @@ export function UsersPage() {
       toast.error('Usuario, nombre y PIN son obligatorios.');
       return null;
     }
-    if (!/^\d{4}$/.test(password)) {
-      toast.error('El PIN debe ser exactamente 4 dígitos numéricos.');
-      return null;
+    if (role === 'guardia') {
+      if (!/^\d{4}$/.test(password)) {
+        toast.error('El PIN debe ser exactamente 4 dígitos numéricos.');
+        return null;
+      }
+    } else {
+      if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+        toast.error('La contraseña debe tener al menos 8 caracteres, una letra y un número.');
+        return null;
+      }
     }
     const payload: Record<string, unknown> = {
       username: username.trim().toLowerCase(),
@@ -232,9 +239,18 @@ export function UsersPage() {
       toast.error('El nombre es obligatorio.');
       return;
     }
-    if (editForm.password && !/^\d{4}$/.test(editForm.password)) {
-      toast.error('El PIN debe ser exactamente 4 dígitos.');
-      return;
+    if (editForm.password) {
+      if (editForm.role === 'guardia') {
+        if (!/^\d{4}$/.test(editForm.password)) {
+          toast.error('El PIN debe ser exactamente 4 dígitos numéricos.');
+          return;
+        }
+      } else {
+        if (editForm.password.length < 8 || !/[A-Za-z]/.test(editForm.password) || !/\d/.test(editForm.password)) {
+          toast.error('La contraseña debe tener al menos 8 caracteres, una letra y un número.');
+          return;
+        }
+      }
     }
     const payload: Record<string, unknown> = {
       fullName: editForm.fullName.trim(),
@@ -282,9 +298,20 @@ export function UsersPage() {
   };
 
   const handleChangePin = async (id: string) => {
-    if (!/^\d{4}$/.test(newPin)) {
-      toast.error('El PIN debe ser exactamente 4 dígitos numéricos.');
-      return;
+    const targetUser = users.find(u => userId(u) === id);
+    if (!targetUser) return;
+    const isGuard = targetUser.role === 'guardia';
+
+    if (isGuard) {
+      if (!/^\d{4}$/.test(newPin)) {
+        toast.error('El PIN debe ser exactamente 4 dígitos numéricos.');
+        return;
+      }
+    } else {
+      if (newPin.length < 8 || !/[A-Za-z]/.test(newPin) || !/\d/.test(newPin)) {
+        toast.error('La contraseña debe tener al menos 8 caracteres, una letra y un número.');
+        return;
+      }
     }
     setSavingPin(true);
     try {
@@ -386,18 +413,19 @@ export function UsersPage() {
                   </select>
                 </div>
                 <div>
-                  <label className={labelCls}>PIN inicial (4 dígitos)</label>
+                  <label className={labelCls}>{form.role === 'guardia' ? 'PIN inicial (4 dígitos)' : 'Contraseña inicial'}</label>
                   <input
-                    className={cn(fieldCls, 'font-mono tracking-widest')}
-                    placeholder="••••"
-                    maxLength={4}
-                    inputMode="numeric"
+                    className={cn(fieldCls, form.role === 'guardia' && 'font-mono tracking-widest')}
+                    placeholder={form.role === 'guardia' ? '••••' : 'Mín. 8 caracteres, letra y número'}
+                    maxLength={form.role === 'guardia' ? 4 : undefined}
+                    inputMode={form.role === 'guardia' ? "numeric" : "text"}
                     type="password"
                     value={form.password}
                     onChange={(e) =>
                       setForm({ ...form, password: e.target.value })
                     }
                   />
+                  {form.role !== 'guardia' && <p className="mt-1 text-[10px] text-muted-foreground">Mín. 8 caracteres, incluir letra y número.</p>}
                 </div>
               </div>
 
@@ -532,22 +560,25 @@ export function UsersPage() {
                       )}
                     </div>
 
-                    {pinTarget === id && (
+                    {pinTarget === id && (() => {
+                      const isGuard = u.role === 'guardia';
+                      return (
                       <div className="mt-3 flex items-end gap-3 rounded-lg border border-border bg-muted/40 p-3">
                         <div className="flex-1">
-                          <label className={labelCls}>Nuevo PIN (4 dígitos)</label>
+                          <label className={labelCls}>{isGuard ? 'Nuevo PIN (4 dígitos)' : 'Nueva contraseña'}</label>
                           <input
                             className={cn(
                               fieldCls,
-                              'font-mono tracking-widest',
+                              isGuard && 'font-mono tracking-widest',
                             )}
-                            placeholder="••••"
-                            maxLength={4}
-                            inputMode="numeric"
+                            placeholder={isGuard ? '••••' : 'Mín. 8 caracteres, letra y número'}
+                            maxLength={isGuard ? 4 : undefined}
+                            inputMode={isGuard ? "numeric" : "text"}
                             type="password"
                             value={newPin}
                             onChange={(e) => setNewPin(e.target.value)}
                           />
+                          {!isGuard && <p className="mt-1 text-[10px] text-muted-foreground">Mín. 8 caracteres, incluir letra y número.</p>}
                         </div>
                         <button
                           onClick={() => {
@@ -569,7 +600,8 @@ export function UsersPage() {
                           Guardar
                         </button>
                       </div>
-                    )}
+                      );
+                    })()}
 
                     {editTarget === id && editForm && (
                       <div className="mt-3 space-y-3 rounded-lg border border-border bg-muted/40 p-3">
@@ -625,16 +657,16 @@ export function UsersPage() {
                           </div>
                           <div>
                             <label className={labelCls}>
-                              Nuevo PIN (opcional)
+                              {editForm.role === 'guardia' ? 'Nuevo PIN (opcional)' : 'Nueva contraseña (opcional)'}
                             </label>
                             <input
                               className={cn(
                                 fieldCls,
-                                'font-mono tracking-widest',
+                                editForm.role === 'guardia' && 'font-mono tracking-widest',
                               )}
-                              placeholder="••••"
-                              maxLength={4}
-                              inputMode="numeric"
+                              placeholder={editForm.role === 'guardia' ? '••••' : 'Mín. 8 caracteres, letra y número'}
+                              maxLength={editForm.role === 'guardia' ? 4 : undefined}
+                              inputMode={editForm.role === 'guardia' ? "numeric" : "text"}
                               type="password"
                               value={editForm.password}
                               onChange={(e) =>
@@ -644,6 +676,7 @@ export function UsersPage() {
                                 })
                               }
                             />
+                            {editForm.role !== 'guardia' && <p className="mt-1 text-[10px] text-muted-foreground">Mín. 8 caracteres, incluir letra y número.</p>}
                           </div>
                         </div>
 

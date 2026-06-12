@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
+import { requireValidBranchContext } from '../middleware/requireValidBranchContext';
 import {
   getGuardDashboard,
   createOrUpdateInspection,
@@ -12,7 +13,7 @@ const router = Router();
 router.use(requireAuth);
 
 // Dashboard del turno actual (calculado server-side). Antes de /:id.
-router.get('/dashboard', getGuardDashboard);
+router.get('/dashboard', requireValidBranchContext, getGuardDashboard);
 
 router.post('/', createOrUpdateInspection);            // registrar/actualizar en el turno actual (guardia)
 router.patch('/:id', editInspection);                  // editar por id (supervisor; sellado si turno pasado)
