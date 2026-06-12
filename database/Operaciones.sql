@@ -544,6 +544,12 @@ IF NOT EXISTS (SELECT 1 FROM Branches WHERE Code = 'SV-CENTRAL')
     INSERT INTO Branches (CountryId, Code, Name)
     SELECT Id, 'SV-CENTRAL', 'El Salvador - Zaragoza' FROM Countries WHERE Code = 'SV';
 
+-- Auto-sanación (idempotente): las bases creadas antes del rename a "Zaragoza"
+-- conservan el nombre viejo ("El Salvador - Sede Central") porque el INSERT de
+-- arriba se salta cuando la sucursal ya existe. Forzamos el nombre canónico.
+UPDATE Branches SET Name = 'El Salvador - Zaragoza'
+WHERE Code = 'SV-CENTRAL' AND Name <> 'El Salvador - Zaragoza';
+
 IF NOT EXISTS (SELECT 1 FROM Branches WHERE Code = 'NI-CENTRAL')
     INSERT INTO Branches (CountryId, Code, Name)
     SELECT Id, 'NI-CENTRAL', 'Nicaragua - Sede Central' FROM Countries WHERE Code = 'NI';
