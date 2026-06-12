@@ -2,6 +2,7 @@ import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import { getPool, getConn, closePool, withScriptContext } from '../db/connection';
 import { createVehicle, getActiveVehicles } from '../db/vehicles';
+import { createDriver, getActiveDrivers } from '../db/drivers';
 import { createUser, updateUser, findUserByUsername } from '../db/users';
 import type { TenantScope, UserRole } from '../types';
 
@@ -62,6 +63,27 @@ const VEHICLES_TO_SEED = [
   { country: 'PA', brand: 'ISUZU', model: 'IGL7013', plate: 'CS8444', year: 2019, type: 'Pick-up' },
   { country: 'PA', brand: 'ISUZU', model: 'IGL7013', plate: 'CS8438', year: 2019, type: 'Pick-up' },
   { country: 'PA', brand: 'TOYOTA', model: 'LAND CRUISER PRADO', plate: 'EI5223', year: 2023, type: 'Camioneta' }
+];
+
+// Conductores reales por sucursal. La tabla Drivers solo persiste Nombre y
+// Departamento; el "cargo" (Motorista / Motorista Mensajero) no tiene columna y,
+// por decisión de negocio, no se almacena. La sucursal se resuelve por código de
+// país igual que los vehículos (El Salvador tiene una única sucursal registrada).
+const DRIVERS_TO_SEED = [
+  // EL SALVADOR
+  { country: 'SV', name: 'Eliseo Ayala Sanchez',       department: 'SERVICIOS GENERALES' },
+  { country: 'SV', name: 'Jose Efrain Alvarado Amaya', department: 'DIRECCION EJECUTIVA' },
+  { country: 'SV', name: 'Jose Walter Rosales Chita',  department: 'BODEGA' }
+];
+
+// Personal de garita (guardias) por sucursal. A diferencia de los conductores,
+// son usuarios CON login (rol 'guardia'); por eso van por createUser, no
+// createDriver. CK_Users_RoleScope exige BranchId NOT NULL y CountryId NULL para
+// este rol. El PIN/contraseña se fija en 1234 (requisito de negocio).
+const STAFF_TO_SEED: { country: string; username: string; fullName: string; role: UserRole }[] = [
+  // EL SALVADOR
+  { country: 'SV', username: 'adrian', fullName: 'Jose Adrian Lopez Bonilla',     role: 'guardia' },
+  { country: 'SV', username: 'rafael', fullName: 'Rafael Arturo Aguilar Mauricio', role: 'guardia' }
 ];
 
 async function seedProductionVehicles() {
@@ -164,6 +186,87 @@ async function seedProductionVehicles() {
         });
 
         console.log(`[CREADO] Vehículo placa ${vehicleData.plate} (${vehicleData.country}) creado exitosamente.`);
+      }
+
+      console.log('\nIniciando carga de conductores...');
+
+      // Cache de conductores existentes por sucursal para idempotencia por nombre.
+      const existingDriversCache: Record<number, any[]> = {};
+
+      for (const driverData of DRIVERS_TO_SEED) {
+        const branchId = branchMap[driverData.country];
+
+        if (!branchId) {
+          console.warn(`[OMITIDO] No se encontró sucursal activa para el país: ${driverData.country}`);
+          continue;
+        }
+
+        const scope: TenantScope = { kind: 'branch', branchId };
+
+        // Cargar conductores existentes de la sucursal la primera vez
+        if (!existingDriversCache[branchId]) {
+          existingDriversCache[branchId] = await getActiveDrivers(scope);
+        }
+
+        // Comportamiento idempotente: verificar por nombre dentro de la sucursal
+        const alreadyExists = existingDriversCache[branchId].some(
+          (ed: any) => ed.name === driverData.name
+        );
+
+        if (alreadyExists) {
+          console.log(`[OMITIDO] Conductor ${driverData.name} (${driverData.country}) ya existe.`);
+          continue;
+        }
+
+        const created = await createDriver({
+          name: driverData.name,
+          department: driverData.department,
+          branchId
+        });
+        // Mantener el cache al día evita duplicar si la lista trae repetidos
+        existingDriversCache[branchId].push(created);
+
+        console.log(`[CREADO] Conductor ${driverData.name} (${driverData.country}) creado exitosamente.`);
+      }
+
+      console.log('\nIniciando carga de personal de garita (guardias)...');
+
+      // El PIN de los guardias es 1234 (requisito de negocio). Se hashea aparte
+      // del ADMIN_PASSWORD del superadmin.
+      const guardHash = await bcrypt.hash('1234', 12);
+
+      for (const staff of STAFF_TO_SEED) {
+        const branchId = branchMap[staff.country];
+
+        if (!branchId) {
+          console.warn(`[OMITIDO] No se encontró sucursal activa para el país: ${staff.country}`);
+          continue;
+        }
+
+        // Comportamiento idempotente: upsert por username
+        const existingStaff = await findUserByUsername(staff.username);
+
+        if (!existingStaff) {
+          await createUser({
+            username:     staff.username,
+            fullName:     staff.fullName,
+            role:         staff.role,
+            passwordHash: guardHash,
+            branchId,        // guardia: CK_Users_RoleScope exige BranchId NOT NULL
+            countryId:    null
+          });
+          console.log(`[CREADO] Guardia '${staff.username}' (${staff.fullName}) en ${staff.country}.`);
+        } else {
+          await updateUser(String(existingStaff.id), {
+            fullName:     staff.fullName,
+            role:         staff.role,
+            active:       true,
+            passwordHash: guardHash,
+            branchId,
+            countryId:    null
+          });
+          console.log(`[ACTUALIZADO] Guardia '${staff.username}': datos y PIN (1234) restablecidos.`);
+        }
       }
     });
 
